@@ -1,11 +1,21 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runAgent } from '../../src/agent/loop.ts';
+import { Session } from '../../src/core/session.ts';
 import { AiError } from '../../src/ai/errors.ts';
-import type { AiClient, StreamEvent, Message } from '../../src/ai/types.ts';
+import type { AiClient } from '../../src/ai/types.ts';
 import type { Tool } from '../../src/tools/types.ts';
+import type { CoreEvent } from '../../src/core/events.ts';
 
-function echoTool(name: string, input: Record<string, unknown>): Tool {
+function makeSession(): Session {
+  const s = new Session();
+  s.start();
+  return s;
+}
+
+const CTX = { cwd: process.cwd(), askPermission: (async () => true) as (action: string, target: string) => Promise<boolean> };
+
+function echoTool(name: string): Tool {
   return {
     name,
     description: 'echo',
@@ -24,14 +34,15 @@ test('no tool calls → returns assistant text and ends', async () => {
       yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] } };
     },
   };
-  const result = await runAgent({ client, systemPrompt: 'sys', prompt: 'hi', tools: [], cwd: process.cwd(), askPermission: async () => true });
+  const session = makeSession();
+  const result = await runAgent({ client, session, prompt: 'hi', tools: [], ...CTX });
   assert.equal(result, 'hello');
 });
 
 test('delivers the user prompt to streamChat as a user message', async () => {
   const client: AiClient = {
     async *streamChat(params) {
-      const userMsg = params.messages.find((m) => m.role === 'user');
+      const userMsg = params.messages.find((m) => m.role === 'user' && m.content.some((c) => c.type === 'text'));
       if (!userMsg) throw new Error('no user message in messages');
       const textBlock = userMsg.content.find((c) => c.type === 'text');
       if (textBlock?.type !== 'text' || textBlock.text !== 'hi') throw new Error('user prompt mismatch');
@@ -39,7 +50,8 @@ test('delivers the user prompt to streamChat as a user message', async () => {
       yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] } };
     },
   };
-  const result = await runAgent({ client, systemPrompt: 'sys', prompt: 'hi', tools: [], cwd: process.cwd(), askPermission: async () => true });
+  const session = makeSession();
+  const result = await runAgent({ client, session, prompt: 'hi', tools: [], ...CTX });
   assert.equal(result, 'ok');
 });
 
@@ -53,19 +65,46 @@ test('tool call → executes tool → returns tool result to AI → final text',
         yield { type: 'tool_call_delta', id: 't1', inputDelta: '{"text":"x"}' };
         yield { type: 'done', message: { role: 'assistant', content: [{ type: 'tool_call', id: 't1', name: 'myTool', input: { text: 'x' } }] } };
       } else {
-        // second call sees the tool_result in history (the prompt is the first user message now)
         const userMsg = params.messages.find((m) => m.role === 'user' && m.content.some((c) => c.type === 'tool_result'));
         assert.ok(userMsg);
-        assert.equal(userMsg.content.some((c) => c.type === 'tool_result'), true);
         yield { type: 'text_delta', text: 'done' };
         yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] } };
       }
     },
   };
-  const tool = echoTool('myTool', {});
-  const result = await runAgent({ client, systemPrompt: 'sys', prompt: 'hi', tools: [tool], cwd: process.cwd(), askPermission: async () => true });
+  const session = makeSession();
+  const result = await runAgent({ client, session, prompt: 'hi', tools: [echoTool('myTool')], ...CTX });
   assert.equal(result, 'done');
   assert.equal(iterations, 2);
+});
+
+test('tool execution receives cwd and askPermission from params', async () => {
+  let gotCwd = '';
+  let askCalled = false;
+  const tool: Tool = {
+    name: 'ctxTool',
+    description: 'ctx',
+    inputSchema: { type: 'object' },
+    async execute(_input, ctx) {
+      gotCwd = ctx.cwd;
+      askCalled = await ctx.askPermission('test', 'target');
+      return { content: 'ok' };
+    },
+  };
+  const client: AiClient = {
+    async *streamChat(params) {
+      const hasResult = params.messages.some((m) => m.role === 'user' && m.content.some((c) => c.type === 'tool_result'));
+      if (!hasResult) {
+        yield { type: 'done', message: { role: 'assistant', content: [{ type: 'tool_call', id: 't', name: 'ctxTool', input: {} }] } };
+      } else {
+        yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'final' }] } };
+      }
+    },
+  };
+  const session = makeSession();
+  await runAgent({ client, session, prompt: 'hi', tools: [tool], cwd: '/tmp/ctx', askPermission: async () => { return true; } });
+  assert.equal(gotCwd, '/tmp/ctx');
+  assert.equal(askCalled, true);
 });
 
 test('stops after maxIterations', async () => {
@@ -76,22 +115,59 @@ test('stops after maxIterations', async () => {
       yield { type: 'done', message: { role: 'assistant', content: [{ type: 'tool_call', id: 't', name: 'myTool', input: {} }] } };
     },
   };
-  const tool = echoTool('myTool', {});
-  const result = await runAgent({ client, systemPrompt: 'sys', prompt: 'hi', tools: [tool], cwd: process.cwd(), askPermission: async () => true, maxIterations: 2 });
+  const session = makeSession();
+  const result = await runAgent({ client, session, prompt: 'hi', tools: [echoTool('myTool')], ...CTX, maxIterations: 2 });
   assert.equal(iterations, 2);
   assert.equal(result, '');
 });
 
 test('throws AiError when streamChat ends without a terminal done or error event', async () => {
-  // A misbehaving adapter yields deltas but no terminal event — this must be
-  // loud, not a silent retry that burns up to maxIterations.
   const client: AiClient = {
     async *streamChat() {
       yield { type: 'text_delta', text: 'orphan' };
     },
   };
+  const session = makeSession();
   await assert.rejects(
-    () => runAgent({ client, systemPrompt: 'sys', prompt: 'hi', tools: [], cwd: process.cwd(), askPermission: async () => true, maxIterations: 2 }),
+    () => runAgent({ client, session, prompt: 'hi', tools: [], ...CTX, maxIterations: 2 }),
     (e: unknown) => e instanceof AiError && e.kind === 'protocol',
   );
+});
+
+test('broadcasts stream events as core events on session bus', async () => {
+  const client: AiClient = {
+    async *streamChat() {
+      yield { type: 'text_delta', text: 'hi' };
+      yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] } };
+    },
+  };
+  const session = makeSession();
+  const got: string[] = [];
+  session.bus.subscribe((ev: CoreEvent) => got.push(ev.type));
+  await runAgent({ client, session, prompt: 'hi', tools: [], ...CTX });
+  assert.ok(got.includes('text_delta'));
+  assert.ok(got.includes('done'));
+});
+
+test('messages accumulate in session across consecutive runAgent calls', async () => {
+  const session = makeSession();
+  await runAgent({
+    client: {
+      async *streamChat() {
+        yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'one' }] } };
+      },
+    },
+    session, prompt: 'first', tools: [], ...CTX,
+  });
+  let sawPrior = false;
+  await runAgent({
+    client: {
+      async *streamChat(params) {
+        sawPrior = params.messages.some((m) => m.role === 'assistant' && JSON.stringify(m.content).includes('one'));
+        yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'two' }] } };
+      },
+    },
+    session, prompt: 'second', tools: [], ...CTX,
+  });
+  assert.equal(sawPrior, true);
 });

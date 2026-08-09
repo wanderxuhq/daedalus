@@ -1,25 +1,35 @@
 import type { AiClient, StreamEvent, ToolDefinition } from '../ai/types.ts';
-import type { Tool, ToolContext, ToolResult } from '../tools/types.ts';
+import type { Tool, ToolResult } from '../tools/types.ts';
 import { AiError } from '../ai/errors.ts';
-import { MessageHistory } from './context.ts';
+import type { Session } from '../core/session.ts';
+import type { CoreEvent } from '../core/events.ts';
 
 export interface RunAgentParams {
   client: AiClient;
-  systemPrompt: string;
+  session: Session;
   prompt: string;
   tools: Tool[];
   cwd: string;
   askPermission: (action: string, target: string) => Promise<boolean>;
-  onEvent?: (ev: StreamEvent) => void;
   maxIterations?: number;
 }
 
 const DEFAULT_MAX = 100;
 
+function toCoreEvent(ev: StreamEvent): CoreEvent {
+  switch (ev.type) {
+    case 'text_delta': return { type: 'text_delta', text: ev.text };
+    case 'thinking_delta': return { type: 'thinking_delta', thinking: ev.thinking };
+    case 'tool_call_start': return { type: 'tool_call_start', id: ev.id, name: ev.name };
+    case 'tool_call_delta': return { type: 'tool_call_delta', id: ev.id, inputDelta: ev.inputDelta };
+    case 'done': return { type: 'done', message: ev.message };
+    case 'error': return { type: 'error', error: ev.error };
+  }
+}
+
 export async function runAgent(params: RunAgentParams): Promise<string> {
-  const history = new MessageHistory();
-  history.add({ role: 'system', content: [{ type: 'text', text: params.systemPrompt }] });
-  history.add({ role: 'user', content: [{ type: 'text', text: params.prompt }] });
+  const { session } = params;
+  session.addMessage({ role: 'user', content: [{ type: 'text', text: params.prompt }] });
 
   const toolDefs: ToolDefinition[] = params.tools.map((t) => ({
     name: t.name,
@@ -33,15 +43,14 @@ export async function runAgent(params: RunAgentParams): Promise<string> {
   for (let i = 0; i < maxIterations; i++) {
     const events: StreamEvent[] = [];
     for await (const ev of params.client.streamChat({
-      // model omitted: client-level default (from config/flags) is applied by the adapter
-      messages: history.get(),
+      messages: session.getMessages(),
       tools: toolDefs,
       cache: { enabled: true },
     })) {
-      params.onEvent?.(ev);
+      session.bus.emit(toCoreEvent(ev));
       events.push(ev);
       if (ev.type === 'error') throw ev.error;
-      if (ev.type === 'done') history.add(ev.message);
+      if (ev.type === 'done') session.addMessage(ev.message);
     }
     // Equivalent of events.findLast(...): scan backwards for the terminal 'done'.
     // findLast is an ES2023 method and this project's tsconfig targets ES2022.
@@ -62,7 +71,6 @@ export async function runAgent(params: RunAgentParams): Promise<string> {
     if (calls.length === 0) break;
 
     const results: ToolResult[] = [];
-    const ctx: ToolContext = { cwd: params.cwd, askPermission: params.askPermission };
     for (const call of calls) {
       if (call.type !== 'tool_call') continue;
       const tool = params.tools.find((t) => t.name === call.name);
@@ -70,7 +78,7 @@ export async function runAgent(params: RunAgentParams): Promise<string> {
       if (!tool) {
         res = { content: `Unknown tool: ${call.name}`, isError: true };
       } else {
-        try { res = await tool.execute(call.input, ctx); }
+        try { res = await tool.execute(call.input, { cwd: params.cwd, askPermission: params.askPermission }); }
         catch (e) { res = { content: (e as Error).message, isError: true }; }
       }
       results.push(res);
@@ -84,7 +92,7 @@ export async function runAgent(params: RunAgentParams): Promise<string> {
         isError: r.isError,
       };
     });
-    history.add({ role: 'user', content: resultBlocks });
+    session.addMessage({ role: 'user', content: resultBlocks });
   }
   return finalText;
 }
