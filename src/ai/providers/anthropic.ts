@@ -26,6 +26,7 @@ export function toAnthropicBody(params: ChatParams): Record<string, unknown> {
   const body: Record<string, unknown> = {
     model: params.model,
     max_tokens: params.maxTokens ?? DEFAULT_MAX_TOKENS,
+    stream: true,
   };
   if (systemText) body.system = systemText;
   if (params.temperature !== undefined) body.temperature = params.temperature;
@@ -33,7 +34,7 @@ export function toAnthropicBody(params: ChatParams): Record<string, unknown> {
   const cacheEnabled = params.cache?.enabled !== false;
 
   if (cacheEnabled && systemText) {
-    body.system = { type: 'text', text: systemText, cache_control: { type: 'ephemeral' } };
+    body.system = [{ type: 'text', text: systemText, cache_control: { type: 'ephemeral' } }];
   }
 
   const messages = params.messages.filter((m) => m.role !== 'system').map((m) => toAnthropicMessage(m));
@@ -154,11 +155,19 @@ export function createAnthropicClient(config: AnthropicClientConfig): import('..
         throw e;
       }
       try {
+        // Blocks accumulate across payloads (content_block_delta references the
+        // block opened by an earlier content_block_start), so buffer all payloads
+        // and run the batch converter once at the terminal event.
+        const accumulated: Record<string, unknown>[] = [];
         for await (const data of parseSseStream(stream)) {
           if (!data) continue;
           let payload: Record<string, unknown>;
           try { payload = JSON.parse(data); } catch { throw new AiError('parse', `bad SSE JSON: ${data.slice(0, 100)}`); }
-          for (const ev of anthropicEventsToIR([payload])) yield ev;
+          accumulated.push(payload);
+          if (payload.type === 'message_stop' || payload.type === 'error') {
+            for (const ev of anthropicEventsToIR(accumulated)) yield ev;
+            accumulated.length = 0;
+          }
         }
       } catch (e) {
         if (e instanceof AiError) { yield { type: 'error', error: e }; return; }
