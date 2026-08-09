@@ -1,7 +1,7 @@
 # Daedalus — Agent CLI 设计文档
 
 日期：2026-08-09
-状态：草案（配置部分待后续讨论细化）
+状态：草案（配置与权限部分待后续讨论细化）
 
 ## 1. 概述
 
@@ -20,14 +20,14 @@ Daedalus 是一个类 Claude Code 的终端 Agent 项目。目标：Claude Code 
 
 1. AI 接入层：统一 IR 类型 + AiClient 接口 + OpenAI / Anthropic Adapter + SSE 解析 + HTTP helper + 统一错误模型。
 2. Agent 循环：调 AI → 执行工具 → 循环，直至无工具调用或达迭代上限。
-3. 工具系统：Bash、Read、Write/Edit、LS、Grep、Glob 六件套 + 权限雏形。
+3. 工具系统：Bash、Read、Write/Edit、LS、Grep、Glob 六件套。
 4. CLI：简易 REPL + ANSI 彩色渲染，支持 `npx` 调用。
 5. 配置：环境变量 + 配置文件（细节待讨论，见 §8）。
 6. 测试：node:test 全覆盖核心层。
 
 ### 不包含（进 Roadmap，见 §9）
 
-丰富 TUI、完整权限系统、上下文压缩/历史裁剪/断点恢复、子代理与多 agent 协作、WebFetch/WebSearch 工具、更多 provider adapter、打包发布打磨。
+丰富 TUI、权限系统（含雏形，待讨论）、上下文压缩/历史裁剪/断点恢复、子代理与多 agent 协作、WebFetch/WebSearch 工具、更多 provider adapter、打包发布打磨。
 
 ## 3. 技术栈与工程约束
 
@@ -62,7 +62,6 @@ daedalus/
 │   ├── tools/
 │   │   ├── types.ts           #   Tool 接口 + ToolContext
 │   │   ├── registry.ts        #   注册表
-│   │   ├── permission.ts      #   权限雏形（allow/deny/ask）
 │   │   ├── bash.ts / read.ts / write.ts / edit.ts / ls.ts / grep.ts / glob.ts
 │   ├── cli/
 │   │   ├── main.ts            #   bin 入口（解析 argv）
@@ -125,7 +124,7 @@ interface AiClient {
 }
 ```
 
-### 5.4 缓存支持（prompt caching）
+### 5.2 缓存支持（prompt caching）
 
 目标：**最大化命中 AI 提供商的 prompt 缓存**，降低多轮对话成本。
 
@@ -143,7 +142,7 @@ interface AiClient {
 
 `ChatParams` 增加缓存开关：`cache?: { enabled: boolean }`，默认启用。
 
-### 5.2 Adapter 双向转换
+### 5.3 Adapter 双向转换
 
 每个 provider 一个 adapter，负责两件事，其余皆哑：
 
@@ -158,7 +157,7 @@ interface AiClient {
 - 工具调用/结果：Anthropic `tool_use` / `tool_result` ↔ IR `tool_call` / `tool_result`；OpenAI `tool_calls[].function` ↔ IR `tool_call`。
 - `tool_result` 在 IR 中作为消息块，转 OpenAI 时映射为 `role: "tool"` 消息，`tool_call_id` 关联。
 
-### 5.3 SSE 与错误处理
+### 5.4 SSE 与错误处理
 
 - `sse.ts`：共享 SSE 行解析器（`data:` 事件行），处理分块、断行、多事件、CRLF、空行。OpenAI 与 Anthropic 的 `data:` 事件体结构不同，由各自 adapter 解释。
 - 统一 `AiError`（带 `kind` 判别字段）：`auth`（401/403）、`rateLimit`（429）、`server`（5xx）、`badRequest`（4xx）、`timeout`、`network`、`parse`。
@@ -180,9 +179,8 @@ while true:
 要点：
 
 - 历史保留全部消息，第一步不裁剪；上下文压缩/裁剪进 Roadmap。
-- **历史按不可变顺序累积**（`system → 工具定义 → 历史 → 本轮新增`），新增只追加末尾、前缀永不重排——配合 §5.4 缓存最大化命中。
+- **历史按不可变顺序累积**（`system → 工具定义 → 历史 → 本轮新增`），新增只追加末尾、前缀永不重排——配合 §5.2 缓存最大化命中。
 - 工具结果以 `tool_result` 块追加到 assistant 消息后（anthropic 风格）；对 OpenAI 由 adapter 转为 `tool` role。
-- 每轮执行工具前过权限判定。
 - 流式事件从 AI 层透出，CLI 直接消费实时显示。
 
 ## 7. 工具系统
@@ -199,8 +197,7 @@ interface Tool {
 
 interface ToolContext {
   cwd: string;
-  allowlist: PermissionRule[];
-  askPermission: (action: string, target: string) => Promise<boolean>;
+  askPermission: (action: string, target: string) => Promise<boolean>;  // 最简 y/n 确认（安全底线）
 }
 ```
 
@@ -216,12 +213,12 @@ interface ToolContext {
 | **grep** | 递归搜索；忽略 `node_modules` / `.git` |
 | **glob** | 自研最小 glob 匹配（`*`/`**`/`?`）；不引入 glob 库 |
 
-### 7.3 权限雏形
+### 7.3 权限（后置，待讨论）
 
-- 权限询问在终端进行：`是否允许 bash 执行: <命令>? [y/n]`
-- 规则源：`~/.daedalus/config.json` 中的 allowlist / denylist；后续可做 per-project `.daedalus/settings.json`
-- 三类判定：`allow`（执行）/ `deny`（拒绝）/ `ask`（询问）
-- 每个工具执行前经 `shouldAllow(rule, target)` 判定
+第一步**不做**规则化权限系统（allowlist / denylist / per-project settings）。仅保留一条安全底线：
+
+- bash 工具执行前在终端进行最简确认：`是否允许 bash 执行: <命令>? [y/n]`，通过 `ToolContext.askPermission` 触发。
+- 规则化权限系统（allow/deny/ask 配置、per-project settings、细粒度规则）留待后续讨论后实现，见 §9。
 
 ### 7.4 错误处理
 
@@ -237,14 +234,13 @@ interface ToolContext {
 - 关键字段：默认 provider、每个 provider 的 apiKey 来源（环境变量）+ baseURL（可覆盖，以兼容 Ollama/DeepSeek/vLLM 等 openai 兼容服务）、默认 model。
 - 新增 provider 不需要改代码：`createAiClient` 按 provider 名查适配器，baseURL 可覆盖。
 - 模型默认跟随 provider（openai→`gpt-4o`，anthropic→`claude-sonnet-4-5`），可覆盖。
-- 权限规则：bash 的 allow/deny/default 配置。
 
 ## 9. Roadmap
 
 - [ ] 配置完整定稿（待讨论）
+- [ ] 权限系统（规则化：allow/deny/ask 配置、per-project settings、细粒度规则；待讨论后实现）
 - [ ] 丰富 TUI（多面板）
-- [ ] 权限系统完整化（per-project settings、细粒度规则）
-- [ ] 上下文压缩 / 历史裁剪（优先从末尾裁剪、保留前缀，与 §5.4 缓存策略结合）/ 会话断点恢复
+- [ ] 上下文压缩 / 历史裁剪（优先从末尾裁剪、保留前缀，与 §5.2 缓存策略结合）/ 会话断点恢复
 - [ ] 子代理（subagents）与多 agent 协作 → 届时评估 langgraph
 - [ ] 更多工具：WebFetch / WebSearch、交互式提问、文件编辑改进
 - [ ] 更多 provider adapter（Azure、Google…）
@@ -257,7 +253,7 @@ interface ToolContext {
 | **sse** | 分块喂入、断行、多事件、CRLF、空行（fixture 流） |
 | **providers** | IR→请求体、响应体→IR 的**双向转换**测试；openai/anthropic 各一套 fixture；真实格式样例断言；**缓存标记**：anthropic 转换结果含正确 `cache_control` 断点、openai 请求体保持稳定前缀 |
 | **http** | mock fetch：认证错误→AiError、429/5xx→重试、超时→AiError |
-| **tools** | bash 跑 `echo`；read/write/edit 正常与覆盖保护；grep/ls/glob 行为 |
+| **tools** | bash 跑 `echo` + 确认逻辑（mock `askPermission`）；read/write/edit 正常与覆盖保护；grep/ls/glob 行为 |
 | **agent loop** | mock AI 客户端：一轮工具调用→正确执行→结果回传；无工具调用→直接结束；达到迭代上限→安全退出 |
 
 ## 11. 成功标准
