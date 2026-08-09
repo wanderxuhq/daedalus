@@ -1,36 +1,64 @@
 import readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
-import { runAgent } from '../agent/loop.ts';
-import type { Tool } from '../tools/types.ts';
-import type { AiClient } from '../ai/types.ts';
-import { ANSI, renderEvent } from './render.ts';
+import { ANSI } from './render.ts';
+import type { SkillInfo } from '../core/skills/types.ts';
+import type { CoreEvent } from '../core/events.ts';
 
-export interface ReplOpts {
-  client: AiClient;
-  tools: Tool[];
-  cwd: string;
-  askPermission: (action: string, target: string) => Promise<boolean>;
+export interface EngineLike {
+  subscribe(handler: (ev: CoreEvent) => void): () => void;
+  run(prompt: string): Promise<string>;
+  skills: SkillInfo[];
+  loadSkill(name: string): Promise<SkillInfo>;
 }
 
-export async function runRepl(opts: ReplOpts): Promise<void> {
+export type ReplLineResult = 'exit' | 'handled' | 'unhandled';
+
+const RESERVED = new Set(['exit', 'quit', 'help', 'skills', 'run']);
+
+/** Handle one line of REPL input as a command. Returns how it was handled. */
+export async function handleReplLine(line: string, engine: EngineLike): Promise<ReplLineResult> {
+  const trimmed = line.trim();
+  if (trimmed === '/exit' || trimmed === '/quit') return 'exit';
+  if (trimmed === '/help') {
+    console.log('Commands: /help, /exit, /skills, /<skill-name>. Type a prompt; blank line submits multi-line input.');
+    return 'handled';
+  }
+  if (trimmed === '/skills') {
+    for (const s of engine.skills) {
+      console.log(`${ANSI.bold}${s.name}${ANSI.reset}${s.userInvocable ? '' : ' (user-only)'}: ${s.description}`);
+    }
+    if (engine.skills.length === 0) console.log('No skills installed.');
+    return 'handled';
+  }
+  if (trimmed.startsWith('/') && !trimmed.includes(' ') && !RESERVED.has(trimmed.slice(1))) {
+    const name = trimmed.slice(1);
+    try {
+      const info = await engine.loadSkill(name);
+      console.log(`${ANSI.green}Loaded skill ${info.name}:${ANSI.reset} ${info.description}`);
+    } catch {
+      console.error(`${ANSI.red}Unknown skill: ${name}${ANSI.reset}`);
+    }
+    return 'handled';
+  }
+  return 'unhandled';
+}
+
+export async function runRepl(engine: EngineLike): Promise<void> {
   const rl = readline.createInterface({ input, output, prompt: `${ANSI.green}›${ANSI.reset} ` });
   rl.prompt();
   let buffer = '';
   for await (const line of rl) {
+    const result = await handleReplLine(line, engine);
+    if (result === 'exit') break;
+    if (result === 'handled') { rl.prompt(); continue; }
     const trimmed = line.trim();
-    if (trimmed === '/exit' || trimmed === '/quit') break;
-    if (trimmed === '/help') {
-      console.log('Commands: /help, /exit. Type a prompt; blank line submits multi-line input.');
-      rl.prompt();
-      continue;
-    }
     if (trimmed === '/run' || buffer) {
-      if (trimmed === '/run' && !buffer) { rl.prompt(); continue; }
       const prompt = buffer ? `${buffer}\n${trimmed === '/run' ? '' : trimmed}` : trimmed;
       buffer = '';
       console.log(ANSI.blue + '— running —' + ANSI.reset);
       try {
-        await runAgent({ client: opts.client, systemPrompt: 'You are Daedalus, a terminal agent.', prompt, tools: opts.tools, cwd: opts.cwd, askPermission: opts.askPermission, onEvent: renderEvent });
+        const text = await engine.run(prompt);
+        console.log(ANSI.dim + text + ANSI.reset);
       } catch (e) {
         console.error(ANSI.red + `error: ${(e as Error).message}` + ANSI.reset);
       }
@@ -38,7 +66,6 @@ export async function runRepl(opts: ReplOpts): Promise<void> {
       rl.prompt();
       continue;
     }
-    // accumulating multi-line input
     buffer = trimmed;
     rl.prompt();
   }

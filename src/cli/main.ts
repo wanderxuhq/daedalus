@@ -2,9 +2,9 @@
 import readline from 'node:readline/promises';
 import { loadConfig } from '../config/config.ts';
 import { createAiClient } from '../ai/index.ts';
-import { tools } from '../tools/registry.ts';
+import { DaedalusEngine } from '../core/engine.ts';
 import { runRepl } from './repl.ts';
-import { ANSI } from './render.ts';
+import { ANSI, renderEvent } from './render.ts';
 
 function parseFlags(argv: string[]) {
   const flags: Record<string, string> = {};
@@ -40,4 +40,11 @@ const askPermission = async (action: string, target: string): Promise<boolean> =
 };
 
 console.log(`${ANSI.bold}Daedalus${ANSI.reset} — agent ready (${config.provider}${config.model ? ` / ${config.model}` : ''})`);
-await runRepl({ client, tools, cwd: process.cwd(), askPermission });
+const engine = new DaedalusEngine({
+  client,
+  cwd: process.cwd(),
+  askPermission,
+});
+engine.subscribe(renderEvent);
+await runRepl(engine);
+engine.dispose();
