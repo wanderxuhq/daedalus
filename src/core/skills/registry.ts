@@ -1,4 +1,5 @@
 import { readdirSync, readFileSync, existsSync } from 'node:fs';
+import type { Dirent } from 'node:fs';
 import { join, dirname, basename } from 'node:path';
 import { homedir } from 'node:os';
 import type { SkillInfo, SkillFrontmatter } from './types.ts';
@@ -71,7 +72,7 @@ export class SkillRegistry {
   }
 
   private loadDir(dir: string): void {
-    let entries: ReturnType<typeof readdirSync>;
+    let entries: Dirent[];
     try {
       entries = readdirSync(dir, { withFileTypes: true });
     } catch {
