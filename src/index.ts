@@ -8,3 +8,13 @@ export { tools } from './tools/registry.ts';
 export type { Tool, ToolContext, ToolResult } from './tools/types.ts';
 export { loadConfig } from './config/config.ts';
 export type { DaedalusConfig } from './config/config.ts';
+// core
+export { DaedalusEngine } from './core/engine.ts';
+export type { EngineOptions } from './core/engine.ts';
+export type { CoreEvent } from './core/events.ts';
+export { EventBus } from './core/events.ts';
+export { Session } from './core/session.ts';
+export { SkillRegistry, parseSkillDir } from './core/skills/registry.ts';
+export type { SkillInfo, SkillFrontmatter } from './core/skills/types.ts';
+export { createSkillTool } from './core/skills/skill-tool.ts';
+export { buildSystemPrompt } from './core/system-prompt.ts';
