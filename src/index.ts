@@ -1,1 +1,10 @@
-export const version = '0.1.0';
+export { createAiClient } from './ai/index.ts';
+export type { AiClient, StreamEvent, Message, ContentBlock, ToolDefinition, ChatParams } from './ai/types.ts';
+export { AiError } from './ai/errors.ts';
+export type { AiErrorKind } from './ai/errors.ts';
+export { runAgent } from './agent/loop.ts';
+export type { RunAgentParams } from './agent/loop.ts';
+export { tools } from './tools/registry.ts';
+export type { Tool, ToolContext, ToolResult } from './tools/types.ts';
+export { loadConfig } from './config/config.ts';
+export type { DaedalusConfig } from './config/config.ts';
