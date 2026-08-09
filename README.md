@@ -81,7 +81,7 @@ Standard provider keys are also honored when `DAEDALUS_API_KEY` is not set:
 - `ANTHROPIC_API_KEY` — used when the active provider is `anthropic`
 - `OPENAI_API_KEY` — used when the active provider is `openai`
 
-If no key can be found for the active provider, Daedalus exits with an error telling you which variable to set.
+If no key can be found for the active provider, Daedalus starts an interactive first-run setup wizard that asks for provider, API key, model and base URL, and writes them to `~/.daedalus/config.json` for you. Press Ctrl-C or leave the key blank to skip the wizard and set the env vars yourself.
 
 ## Usage
 

@@ -31,20 +31,41 @@ function readFileConfig(env: NodeJS.ProcessEnv): FileConfig {
   }
 }
 
-export function loadConfig(env: NodeJS.ProcessEnv = process.env): DaedalusConfig {
+/** Resolve config from env + file without throwing on a missing key. */
+export function resolveConfig(env: NodeJS.ProcessEnv = process.env): DaedalusConfig {
   const file = readFileConfig(env);
   const provider = (env.DAEDALUS_PROVIDER ?? file.provider ?? 'anthropic') as AiProviderName;
   const apiKey = env.DAEDALUS_API_KEY
     ?? (provider === 'openai' ? env.OPENAI_API_KEY : env.ANTHROPIC_API_KEY)
     ?? file.apiKey;
-  if (!apiKey) {
-    const varName = provider === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY';
-    throw new Error(`No API key for provider "${provider}". Set ${varName} (or DAEDALUS_API_KEY) or add apiKey to ~/.daedalus/config.json`);
-  }
   return {
     provider,
     apiKey,
     baseURL: env.DAEDALUS_BASE_URL ?? file.baseURL,
     model: env.DAEDALUS_MODEL ?? file.model,
   };
+}
+
+export function loadConfig(env: NodeJS.ProcessEnv = process.env): DaedalusConfig {
+  const cfg = resolveConfig(env);
+  if (!cfg.apiKey) {
+    const varName = cfg.provider === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY';
+    throw new Error(`No API key for provider "${cfg.provider}". Set ${varName} (or DAEDALUS_API_KEY) or add apiKey to ~/.daedalus/config.json`);
+  }
+  return cfg;
+}
+
+/**
+ * The provider that has no API key configured for it, or null when the config
+ * is complete. `providerOverride` lets a CLI --provider flag redirect which
+ * provider is checked (a key for the default provider is not reused for
+ * another provider).
+ */
+export function missingProvider(env: NodeJS.ProcessEnv = process.env, providerOverride?: AiProviderName): AiProviderName | null {
+  const cfg = resolveConfig(env);
+  const provider = providerOverride ?? cfg.provider;
+  const apiKey = env.DAEDALUS_API_KEY
+    ?? (provider === 'openai' ? env.OPENAI_API_KEY : env.ANTHROPIC_API_KEY)
+    ?? (provider === cfg.provider ? cfg.apiKey : undefined);
+  return apiKey ? null : provider;
 }

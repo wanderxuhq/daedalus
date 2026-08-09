@@ -1,9 +1,12 @@
 #!/usr/bin/env node
 import readline from 'node:readline/promises';
-import { loadConfig } from '../config/config.ts';
+import { loadConfig, missingProvider } from '../config/config.ts';
+import type { DaedalusConfig } from '../config/config.ts';
+import type { AiProviderName } from '../ai/index.ts';
 import { createAiClient } from '../ai/index.ts';
 import { DaedalusEngine } from '../core/engine.ts';
 import { runRepl } from './repl.ts';
+import { runSetupWizard } from './setup.ts';
 import { ANSI, renderEvent } from './render.ts';
 
 function parseFlags(argv: string[]) {
@@ -20,11 +23,19 @@ function parseFlags(argv: string[]) {
 
 const flags = parseFlags(process.argv.slice(2));
 if (flags.help) {
-  console.log('daedalus — a terminal agent\n\nUsage: daedalus [--provider openai|anthropic] [--model M] [--base-url URL]\n\nConfig: ~/.daedalus/config.json and DAEDALUS_* env vars.');
+  console.log('daedalus — a terminal agent\n\nUsage: daedalus [--provider openai|anthropic] [--model M] [--base-url URL]\n\nConfig: ~/.daedalus/config.json and DAEDALUS_* env vars. First run starts an interactive setup.');
   process.exit(0);
 }
 
-const base = loadConfig();
+let base: DaedalusConfig;
+const missing = missingProvider(process.env, flags.provider as AiProviderName | undefined);
+if (missing) {
+  const configured = await runSetupWizard({ defaultProvider: missing });
+  if (!configured) process.exit(1);
+  base = configured;
+} else {
+  base = loadConfig();
+}
 const config = {
   provider: (flags.provider ?? base.provider) as 'openai' | 'anthropic',
   apiKey: base.apiKey,

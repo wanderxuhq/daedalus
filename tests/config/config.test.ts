@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { loadConfig } from '../../src/config/config.ts';
+import { loadConfig, missingProvider } from '../../src/config/config.ts';
 
 function tempConfigFile(contents: string): string {
   const dir = mkdtempSync(join(tmpdir(), 'daedalus-config-'));
@@ -41,6 +41,19 @@ test('DAEDALUS_MODEL and BASE_URL pass through', () => {
 
 test('missing key throws helpful error', () => {
   assert.throws(() => loadConfig({ DAEDALUS_CONFIG_PATH: NO_CONFIG_PATH } as NodeJS.ProcessEnv), /API key/);
+});
+
+test('missingProvider returns the unconfigured provider, or null when key present', () => {
+  assert.equal(missingProvider({ DAEDALUS_CONFIG_PATH: NO_CONFIG_PATH } as NodeJS.ProcessEnv), 'anthropic');
+  assert.equal(missingProvider({ DAEDALUS_PROVIDER: 'openai', DAEDALUS_CONFIG_PATH: NO_CONFIG_PATH } as NodeJS.ProcessEnv), 'openai');
+  assert.equal(missingProvider({ ANTHROPIC_API_KEY: 'sk-ant-1', DAEDALUS_CONFIG_PATH: NO_CONFIG_PATH } as NodeJS.ProcessEnv), null);
+});
+
+test('missingProvider honors a providerOverride without reusing the default providers key', () => {
+  // The default provider has a key, but an explicitly requested different provider does not.
+  assert.equal(missingProvider({ ANTHROPIC_API_KEY: 'sk-ant-1', DAEDALUS_CONFIG_PATH: NO_CONFIG_PATH } as NodeJS.ProcessEnv, 'openai'), 'openai');
+  // And the override's own key satisfies it.
+  assert.equal(missingProvider({ OPENAI_API_KEY: 'sk-1', DAEDALUS_CONFIG_PATH: NO_CONFIG_PATH } as NodeJS.ProcessEnv, 'openai'), null);
 });
 
 test('DAEDALUS_CONFIG_PATH file merges under env-provided fields and exposes file-only fields', () => {
