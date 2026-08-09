@@ -12,31 +12,35 @@ function tempConfigFile(contents: string): string {
   return configPath;
 }
 
+// Every test must pin DAEDALUS_CONFIG_PATH to a path that never exists, so no
+// test can leak a real ~/.daedalus/config.json from the developer's machine.
+const NO_CONFIG_PATH = '/nonexistent/daedalus-config.json';
+
 test('defaults to anthropic with ANTHROPIC_API_KEY', () => {
-  const cfg = loadConfig({ ANTHROPIC_API_KEY: 'sk-ant-1' } as NodeJS.ProcessEnv);
+  const cfg = loadConfig({ ANTHROPIC_API_KEY: 'sk-ant-1', DAEDALUS_CONFIG_PATH: NO_CONFIG_PATH } as NodeJS.ProcessEnv);
   assert.equal(cfg.provider, 'anthropic');
   assert.equal(cfg.apiKey, 'sk-ant-1');
 });
 
 test('DAEDALUS_PROVIDER overrides default', () => {
-  const cfg = loadConfig({ DAEDALUS_PROVIDER: 'openai', OPENAI_API_KEY: 'sk-1' } as NodeJS.ProcessEnv);
+  const cfg = loadConfig({ DAEDALUS_PROVIDER: 'openai', OPENAI_API_KEY: 'sk-1', DAEDALUS_CONFIG_PATH: NO_CONFIG_PATH } as NodeJS.ProcessEnv);
   assert.equal(cfg.provider, 'openai');
   assert.equal(cfg.apiKey, 'sk-1');
 });
 
 test('DAEDALUS_API_KEY takes precedence', () => {
-  const cfg = loadConfig({ DAEDALUS_PROVIDER: 'openai', OPENAI_API_KEY: 'sk-env', DAEDALUS_API_KEY: 'sk-dae' } as NodeJS.ProcessEnv);
+  const cfg = loadConfig({ DAEDALUS_PROVIDER: 'openai', OPENAI_API_KEY: 'sk-env', DAEDALUS_API_KEY: 'sk-dae', DAEDALUS_CONFIG_PATH: NO_CONFIG_PATH } as NodeJS.ProcessEnv);
   assert.equal(cfg.apiKey, 'sk-dae');
 });
 
 test('DAEDALUS_MODEL and BASE_URL pass through', () => {
-  const cfg = loadConfig({ DAEDALUS_PROVIDER: 'openai', OPENAI_API_KEY: 'sk-1', DAEDALUS_MODEL: 'gpt-4.1', DAEDALUS_BASE_URL: 'http://localhost:11434/v1' } as NodeJS.ProcessEnv);
+  const cfg = loadConfig({ DAEDALUS_PROVIDER: 'openai', OPENAI_API_KEY: 'sk-1', DAEDALUS_MODEL: 'gpt-4.1', DAEDALUS_BASE_URL: 'http://localhost:11434/v1', DAEDALUS_CONFIG_PATH: NO_CONFIG_PATH } as NodeJS.ProcessEnv);
   assert.equal(cfg.model, 'gpt-4.1');
   assert.equal(cfg.baseURL, 'http://localhost:11434/v1');
 });
 
 test('missing key throws helpful error', () => {
-  assert.throws(() => loadConfig({} as NodeJS.ProcessEnv), /API key/);
+  assert.throws(() => loadConfig({ DAEDALUS_CONFIG_PATH: NO_CONFIG_PATH } as NodeJS.ProcessEnv), /API key/);
 });
 
 test('DAEDALUS_CONFIG_PATH file merges under env-provided fields and exposes file-only fields', () => {
