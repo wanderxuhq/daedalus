@@ -1,12 +1,25 @@
 {
   "name": "daedalus",
-  "version": "1.0.0",
-  "description": "",
-  "license": "ISC",
-  "author": "",
+  "version": "0.1.0",
+  "description": "A Claude Code-style terminal agent with a provider-agnostic AI access layer",
+  "license": "MIT",
   "type": "module",
-  "main": "index.js",
+  "bin": {
+    "daedalus": "dist/cli/main.js"
+  },
+  "main": "dist/index.js",
+  "files": [
+    "dist"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "build": "tsc",
+    "dev": "node src/cli/main.ts",
+    "test": "node --test 'tests/**/*.test.ts'"
+  },
+  "devDependencies": {
+    "typescript": "^5.9.3"
   }
 }
