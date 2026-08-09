@@ -104,12 +104,14 @@ Once started you land in the REPL prompt (`›`):
 |---|---|
 | `/exit`, `/quit` | Leave the REPL |
 | `/help` | Print available commands |
+| `/skills` | List installed skills |
+| `/<skill-name>` | Load a skill (e.g. `/review`) into the current session |
 
 Any other input is a prompt for the agent. **Multi-line input:** type a second line (or blank line or `/run`) to submit — the buffer accumulates one line before the next input submits it. The agent runs, streams its response and tool calls, executes tools (asking `y/n` before shell commands), and reports the result.
 
 ## Tools
 
-Seven built-in tools are registered (see `src/tools/registry.ts`):
+Seven built-in tools are registered (see `src/tools/registry.ts`); the engine adds an eighth, the `Skill` tool (see [Skills](#skills)):
 
 | Tool | Description |
 |---|---|
@@ -120,6 +122,31 @@ Seven built-in tools are registered (see `src/tools/registry.ts`):
 | `ls` | List directory contents; skips `node_modules` and `.git`. |
 | `grep` | Recursively search file contents for a regex pattern; skips `node_modules` and `.git`. |
 | `glob` | Find files matching a glob pattern (`*`, `**`, `?`); skips `node_modules` and `.git`. |
+| `Skill` | Load a skill by name; the skill body arrives as the tool result. Provided by the engine; see Skills. |
+
+## Skills
+
+Skills are reusable instruction packs the model can load on demand. A skill is a directory containing a `SKILL.md` file:
+
+```markdown
+---
+name: review
+description: Review code for correctness and style
+---
+
+Review the codebase for bugs and style issues.
+```
+
+The frontmatter supports `name`, `description`, `when_to_use`, `allowed-tools`, `disallowed-tools`, `disable-model-invocation`, and `user-invocable`; the rest of the file is the skill body. If `name` is omitted, it falls back to the directory name.
+
+Skills are discovered from two locations, in order (the first match for a given name wins):
+
+1. **Project skills** — every `.claude/skills/` directory from the working directory up to the filesystem root (nearest wins).
+2. **User skills** — `~/.daedalus/skills/`.
+
+The model can load a skill through the `Skill` tool: it picks a name from the tool's listing and the body arrives in the conversation as a tool result. You can also load one yourself from the REPL with `/<skill-name>` (see the REPL commands above).
+
+`allowed-tools` and `disallowed-tools` are parsed but not yet enforced — per-tool restriction is deferred to the MCP sub-project. Sessions are persistent across inputs within a process, so a loaded skill stays active for subsequent turns.
 
 ## Roadmap
 
