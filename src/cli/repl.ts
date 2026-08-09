@@ -30,7 +30,7 @@ export async function runRepl(opts: ReplOpts): Promise<void> {
       buffer = '';
       console.log(ANSI.blue + '— running —' + ANSI.reset);
       try {
-        await runAgent({ client: opts.client, systemPrompt: 'You are Daedalus, a terminal agent.', tools: opts.tools, cwd: opts.cwd, askPermission: opts.askPermission, onEvent: renderEvent });
+        await runAgent({ client: opts.client, systemPrompt: 'You are Daedalus, a terminal agent.', prompt, tools: opts.tools, cwd: opts.cwd, askPermission: opts.askPermission, onEvent: renderEvent });
       } catch (e) {
         console.error(ANSI.red + `error: ${(e as Error).message}` + ANSI.reset);
       }

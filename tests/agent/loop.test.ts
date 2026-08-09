@@ -23,8 +23,23 @@ test('no tool calls → returns assistant text and ends', async () => {
       yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'hello' }] } };
     },
   };
-  const result = await runAgent({ client, systemPrompt: 'sys', tools: [], cwd: process.cwd(), askPermission: async () => true });
+  const result = await runAgent({ client, systemPrompt: 'sys', prompt: 'hi', tools: [], cwd: process.cwd(), askPermission: async () => true });
   assert.equal(result, 'hello');
+});
+
+test('delivers the user prompt to streamChat as a user message', async () => {
+  const client: AiClient = {
+    async *streamChat(params) {
+      const userMsg = params.messages.find((m) => m.role === 'user');
+      if (!userMsg) throw new Error('no user message in messages');
+      const textBlock = userMsg.content.find((c) => c.type === 'text');
+      if (textBlock?.type !== 'text' || textBlock.text !== 'hi') throw new Error('user prompt mismatch');
+      yield { type: 'text_delta', text: 'ok' };
+      yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] } };
+    },
+  };
+  const result = await runAgent({ client, systemPrompt: 'sys', prompt: 'hi', tools: [], cwd: process.cwd(), askPermission: async () => true });
+  assert.equal(result, 'ok');
 });
 
 test('tool call → executes tool → returns tool result to AI → final text', async () => {
@@ -37,18 +52,17 @@ test('tool call → executes tool → returns tool result to AI → final text',
         yield { type: 'tool_call_delta', id: 't1', inputDelta: '{"text":"x"}' };
         yield { type: 'done', message: { role: 'assistant', content: [{ type: 'tool_call', id: 't1', name: 'myTool', input: { text: 'x' } }] } };
       } else {
-        // second call sees the tool_result in history
-        const userMsg = params.messages.find((m) => m.role === 'user');
+        // second call sees the tool_result in history (the prompt is the first user message now)
+        const userMsg = params.messages.find((m) => m.role === 'user' && m.content.some((c) => c.type === 'tool_result'));
         assert.ok(userMsg);
-        const hasResult = userMsg.content.some((c) => c.type === 'tool_result');
-        assert.equal(hasResult, true);
+        assert.equal(userMsg.content.some((c) => c.type === 'tool_result'), true);
         yield { type: 'text_delta', text: 'done' };
         yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] } };
       }
     },
   };
   const tool = echoTool('myTool', {});
-  const result = await runAgent({ client, systemPrompt: 'sys', tools: [tool], cwd: process.cwd(), askPermission: async () => true });
+  const result = await runAgent({ client, systemPrompt: 'sys', prompt: 'hi', tools: [tool], cwd: process.cwd(), askPermission: async () => true });
   assert.equal(result, 'done');
   assert.equal(iterations, 2);
 });
@@ -62,7 +76,7 @@ test('stops after maxIterations', async () => {
     },
   };
   const tool = echoTool('myTool', {});
-  const result = await runAgent({ client, systemPrompt: 'sys', tools: [tool], cwd: process.cwd(), askPermission: async () => true, maxIterations: 2 });
+  const result = await runAgent({ client, systemPrompt: 'sys', prompt: 'hi', tools: [tool], cwd: process.cwd(), askPermission: async () => true, maxIterations: 2 });
   assert.equal(iterations, 2);
   assert.equal(result, '');
 });

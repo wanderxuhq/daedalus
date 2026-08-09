@@ -5,6 +5,7 @@ import { MessageHistory } from './context.ts';
 export interface RunAgentParams {
   client: AiClient;
   systemPrompt: string;
+  prompt: string;
   tools: Tool[];
   cwd: string;
   askPermission: (action: string, target: string) => Promise<boolean>;
@@ -17,6 +18,7 @@ const DEFAULT_MAX = 100;
 export async function runAgent(params: RunAgentParams): Promise<string> {
   const history = new MessageHistory();
   history.add({ role: 'system', content: [{ type: 'text', text: params.systemPrompt }] });
+  history.add({ role: 'user', content: [{ type: 'text', text: params.prompt }] });
 
   const toolDefs: ToolDefinition[] = params.tools.map((t) => ({
     name: t.name,
