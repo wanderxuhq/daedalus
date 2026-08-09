@@ -48,20 +48,24 @@ export class HttpClient {
           const err = new AiError(kind, `HTTP ${res.status}: ${errText.slice(0, 300)}`, res.status);
           if (err.retryable && attempt < this.maxRetries) {
             attempt++;
-            await sleep(500 * 2 ** attempt);
+            await sleep(500 * 2 ** attempt, signal);
             continue;
           }
           throw err;
         }
         return res.body!;
       } catch (e) {
+        // Caller-initiated cancellation must not be retried.
+        if (signal?.aborted) {
+          throw cancellationError();
+        }
         if (e instanceof AiError) throw e;
         const aborted = (e as Error).name === 'AbortError';
         const kind = aborted ? 'timeout' : 'network';
         const err = new AiError(kind, (e as Error).message);
         if (err.retryable && attempt < this.maxRetries) {
           attempt++;
-          await sleep(500 * 2 ** attempt);
+          await sleep(500 * 2 ** attempt, signal);
           continue;
         }
         throw err;
@@ -73,6 +77,24 @@ export class HttpClient {
   }
 }
 
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
+function cancellationError(): AiError {
+  const err = new AiError('timeout', 'Request cancelled by caller');
+  (err as { retryable: boolean }).retryable = false;
+  return err;
+}
+
+function sleep(ms: number, signal?: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    const onAbort = () => {
+      if (timeout) clearTimeout(timeout);
+      reject(cancellationError());
+    };
+    timeout = setTimeout(() => {
+      signal?.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    signal?.addEventListener('abort', onAbort);
+    if (signal?.aborted) onAbort();
+  });
 }

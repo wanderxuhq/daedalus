@@ -44,3 +44,25 @@ test('gives up after maxRetries on persistent 5xx', async () => {
   assert.equal(calls, 3); // initial + 2 retries
   globalThis.fetch = origFetch;
 });
+
+test('does not retry caller-initiated cancellation', async () => {
+  const origFetch = globalThis.fetch;
+  let calls = 0;
+  const ac = new AbortController();
+  globalThis.fetch = mock.fn(async () => {
+    calls++;
+    ac.abort();
+    const err = new Error('This operation was aborted');
+    err.name = 'AbortError';
+    throw err;
+  }) as typeof fetch;
+  const client = new HttpClient({ baseURL: 'https://x', apiKey: 'k', maxRetries: 3 });
+  await assert.rejects(() => client.stream('/chat', {}, { signal: ac.signal }), (e: unknown) => {
+    assert.ok(e instanceof AiError);
+    assert.equal((e as AiError).kind, 'timeout');
+    assert.equal((e as AiError).retryable, false);
+    return true;
+  });
+  assert.equal(calls, 1); // aborted request must not be retried
+  globalThis.fetch = origFetch;
+});
