@@ -125,6 +125,24 @@ interface AiClient {
 }
 ```
 
+### 5.4 缓存支持（prompt caching）
+
+目标：**最大化命中 AI 提供商的 prompt 缓存**，降低多轮对话成本。
+
+两种缓存机制：
+
+- **Anthropic prompt caching**：显式标记，`cache_control: { type: "ephemeral" }` 打在稳定上下文段上，命中靠**前缀匹配**（5 分钟内有效，命中段降价）。
+- **OpenAI**：自动 prompt caching，无需显式标记，命中靠**稳定前缀**（前缀 ≥1024 token 且逐字匹配）。
+
+**尽量命中缓存的工程原则（调度/调用侧）：**
+
+1. **前缀稳定**：请求体顺序固定为 `system → 工具定义 → 历史消息 → 本轮新增`，任何段不重排、不混入动态内容。工具定义与 system prompt 在会话内生成后**复用**（缓存起来），保证逐字一致。
+2. **显式标记**：Anthropic adapter 在稳定段打 `cache_control`：system 字段、工具定义、历史消息的缓存断点（首个 system 之后、以及历史消息的分段处）。
+3. **增量追加**：每轮只把新增的 user/assistant 消息追加在末尾，前缀保持逐字不变。
+4. **裁剪与缓存的关系**（未来做裁剪时）：优先从末尾裁剪、保留前缀；裁剪策略必须与缓存意识结合，避免频繁破坏前缀。
+
+`ChatParams` 增加缓存开关：`cache?: { enabled: boolean }`，默认启用。
+
 ### 5.2 Adapter 双向转换
 
 每个 provider 一个 adapter，负责两件事，其余皆哑：
@@ -162,6 +180,7 @@ while true:
 要点：
 
 - 历史保留全部消息，第一步不裁剪；上下文压缩/裁剪进 Roadmap。
+- **历史按不可变顺序累积**（`system → 工具定义 → 历史 → 本轮新增`），新增只追加末尾、前缀永不重排——配合 §5.4 缓存最大化命中。
 - 工具结果以 `tool_result` 块追加到 assistant 消息后（anthropic 风格）；对 OpenAI 由 adapter 转为 `tool` role。
 - 每轮执行工具前过权限判定。
 - 流式事件从 AI 层透出，CLI 直接消费实时显示。
@@ -225,7 +244,7 @@ interface ToolContext {
 - [ ] 配置完整定稿（待讨论）
 - [ ] 丰富 TUI（多面板）
 - [ ] 权限系统完整化（per-project settings、细粒度规则）
-- [ ] 上下文压缩 / 历史裁剪 / 会话断点恢复
+- [ ] 上下文压缩 / 历史裁剪（优先从末尾裁剪、保留前缀，与 §5.4 缓存策略结合）/ 会话断点恢复
 - [ ] 子代理（subagents）与多 agent 协作 → 届时评估 langgraph
 - [ ] 更多工具：WebFetch / WebSearch、交互式提问、文件编辑改进
 - [ ] 更多 provider adapter（Azure、Google…）
@@ -236,7 +255,7 @@ interface ToolContext {
 | 层 | 测试内容 |
 |---|---|
 | **sse** | 分块喂入、断行、多事件、CRLF、空行（fixture 流） |
-| **providers** | IR→请求体、响应体→IR 的**双向转换**测试；openai/anthropic 各一套 fixture；真实格式样例断言 |
+| **providers** | IR→请求体、响应体→IR 的**双向转换**测试；openai/anthropic 各一套 fixture；真实格式样例断言；**缓存标记**：anthropic 转换结果含正确 `cache_control` 断点、openai 请求体保持稳定前缀 |
 | **http** | mock fetch：认证错误→AiError、429/5xx→重试、超时→AiError |
 | **tools** | bash 跑 `echo`；read/write/edit 正常与覆盖保护；grep/ls/glob 行为 |
 | **agent loop** | mock AI 客户端：一轮工具调用→正确执行→结果回传；无工具调用→直接结束；达到迭代上限→安全退出 |
