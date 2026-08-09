@@ -1,5 +1,6 @@
-import type { AiClient, StreamEvent, Message, ToolDefinition } from '../ai/types.ts';
+import type { AiClient, StreamEvent, ToolDefinition } from '../ai/types.ts';
 import type { Tool, ToolContext, ToolResult } from '../tools/types.ts';
+import { AiError } from '../ai/errors.ts';
 import { MessageHistory } from './context.ts';
 
 export interface RunAgentParams {
@@ -48,7 +49,12 @@ export async function runAgent(params: RunAgentParams): Promise<string> {
     for (let j = events.length - 1; j >= 0; j--) {
       if (events[j].type === 'done') { lastAssistant = events[j]; break; }
     }
-    if (!lastAssistant || lastAssistant.type !== 'done') continue;
+    if (!lastAssistant || lastAssistant.type !== 'done') {
+      // Adapter misbehavior: the stream ended without a terminal 'done' or
+      // 'error' event. Make it loud instead of silently retrying up to
+      // maxIterations.
+      throw new AiError('protocol', 'stream ended without a terminal "done" or "error" event');
+    }
     const msg = lastAssistant.message;
     finalText = msg.content.filter((c) => c.type === 'text').map((c) => (c.type === 'text' ? c.text : '')).join('');
 

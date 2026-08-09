@@ -1,5 +1,5 @@
 export type AiErrorKind =
-  | 'auth' | 'rateLimit' | 'server' | 'badRequest' | 'timeout' | 'network' | 'parse';
+  | 'auth' | 'rateLimit' | 'server' | 'badRequest' | 'timeout' | 'network' | 'parse' | 'protocol';
 
 const RETRYABLE = new Set<AiErrorKind>(['rateLimit', 'server', 'timeout', 'network']);
 

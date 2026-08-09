@@ -1,6 +1,7 @@
 import { test, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { toOpenAIBody, openaiEventsToIR, createOpenAIClient } from '../../../src/ai/providers/openai.ts';
+import { AiError } from '../../../src/ai/errors.ts';
 import type { Message, ToolDefinition, StreamEvent } from '../../../src/ai/types.ts';
 
 test('converts system+user to openai body', () => {
@@ -94,4 +95,42 @@ test('streamChat accumulates deltas across SSE payloads into a full done message
   const tc = done.message.content.find((c) => c.type === 'tool_call')!;
   assert.equal(tc.type, 'tool_call');
   assert.deepEqual(tc.input, { command: 'ls' });
+});
+
+test('streamChat flushes and yields an error event when the stream ends with a top-level error payload (no [DONE])', async () => {
+  const origFetch = globalThis.fetch;
+  // OpenAI sends a top-level `data: {"error": {...}}` on mid-stream errors and
+  // does NOT send [DONE] afterwards — the accumulated text must still be flushed.
+  const payloads = [
+    { choices: [{ delta: { content: 'partial ' } }] },
+    { choices: [{ delta: { content: 'output' } }] },
+    { error: { message: 'boom: mid-stream failure' } },
+  ];
+  const sseChunks = payloads.map((p) => `data: ${JSON.stringify(p)}\n\n`);
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of sseChunks) controller.enqueue(new TextEncoder().encode(chunk));
+      controller.close();
+    },
+  });
+  globalThis.fetch = mock.fn(async () => new Response(stream, { status: 200 })) as typeof fetch;
+
+  const client = createOpenAIClient({ apiKey: 'k', baseURL: 'https://x', maxRetries: 0 });
+  const events: StreamEvent[] = [];
+  for await (const ev of client.streamChat({
+    model: 'm',
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+  })) {
+    events.push(ev);
+  }
+  globalThis.fetch = origFetch;
+
+  // Batch text before the error is still flushed, and the error event surfaces.
+  const types = events.map((e) => e.type);
+  assert.deepEqual(types, ['text_delta', 'text_delta', 'error']);
+  const errEv = events.find((e) => e.type === 'error');
+  assert.ok(errEv && errEv.type === 'error');
+  assert.ok(errEv.error instanceof AiError);
+  assert.equal(errEv.error.message, 'boom: mid-stream failure');
+  assert.equal(errEv.error.kind, 'server');
 });

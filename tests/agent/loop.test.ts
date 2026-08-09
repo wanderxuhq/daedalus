@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { runAgent } from '../../src/agent/loop.ts';
+import { AiError } from '../../src/ai/errors.ts';
 import type { AiClient, StreamEvent, Message } from '../../src/ai/types.ts';
 import type { Tool } from '../../src/tools/types.ts';
 
@@ -79,4 +80,18 @@ test('stops after maxIterations', async () => {
   const result = await runAgent({ client, systemPrompt: 'sys', prompt: 'hi', tools: [tool], cwd: process.cwd(), askPermission: async () => true, maxIterations: 2 });
   assert.equal(iterations, 2);
   assert.equal(result, '');
+});
+
+test('throws AiError when streamChat ends without a terminal done or error event', async () => {
+  // A misbehaving adapter yields deltas but no terminal event — this must be
+  // loud, not a silent retry that burns up to maxIterations.
+  const client: AiClient = {
+    async *streamChat() {
+      yield { type: 'text_delta', text: 'orphan' };
+    },
+  };
+  await assert.rejects(
+    () => runAgent({ client, systemPrompt: 'sys', prompt: 'hi', tools: [], cwd: process.cwd(), askPermission: async () => true, maxIterations: 2 }),
+    (e: unknown) => e instanceof AiError && e.kind === 'protocol',
+  );
 });

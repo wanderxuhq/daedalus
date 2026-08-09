@@ -143,6 +143,14 @@ export function createOpenAIClient(config: OpenAIClientConfig): import('../types
           let payload: Record<string, unknown>;
           try { payload = JSON.parse(data); } catch { throw new AiError('parse', `bad SSE JSON: ${data.slice(0, 100)}`); }
           accumulated.push(payload);
+          // OpenAI does NOT send [DONE] after a top-level error payload — flush
+          // the accumulated batch now so prior text/tool deltas survive and the
+          // error event surfaces to the caller instead of the stream silently
+          // ending with zero events.
+          if (payload.error) {
+            for (const ev of openaiEventsToIR(accumulated)) yield ev;
+            return;
+          }
         }
       } catch (e) {
         if (e instanceof AiError) { yield { type: 'error', error: e }; return; }

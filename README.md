@@ -8,7 +8,7 @@ Key properties:
 
 - **Zero runtime dependencies.** Everything is Node built-ins (`fetch`, `node:fs`, `node:child_process`) plus a hand-written SSE parser. No AI SDKs, no `node-gyp`.
 - **Prompt-cache friendly.** The agent loop keeps the request prefix stable (`system → tools → history → new turn`) and the Anthropic adapter marks stable segments with `cache_control`.
-- **Streaming.** Token and tool-call deltas are streamed from the provider and rendered live to the terminal.
+- **Streaming.** Token and tool-call output is streamed from the provider and rendered as it completes (deltas arrive in a burst at the end of each response turn).
 - **Minimal permission baseline.** Shell commands ask for `y/n` confirmation before running.
 
 ## Install
@@ -105,7 +105,7 @@ Once started you land in the REPL prompt (`›`):
 | `/exit`, `/quit` | Leave the REPL |
 | `/help` | Print available commands |
 
-Any other input is a prompt for the agent. **Multi-line input:** type one or more lines, then submit with a blank line or `/run`. The agent runs, streams its response and tool calls, executes tools (asking `y/n` before shell commands), and reports the result.
+Any other input is a prompt for the agent. **Multi-line input:** type a second line (or blank line or `/run`) to submit — the buffer accumulates one line before the next input submits it. The agent runs, streams its response and tool calls, executes tools (asking `y/n` before shell commands), and reports the result.
 
 ## Tools
 

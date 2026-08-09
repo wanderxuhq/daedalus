@@ -1,6 +1,16 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { loadConfig } from '../../src/config/config.ts';
+
+function tempConfigFile(contents: string): string {
+  const dir = mkdtempSync(join(tmpdir(), 'daedalus-config-'));
+  const configPath = join(dir, 'config.json');
+  writeFileSync(configPath, contents);
+  return configPath;
+}
 
 test('defaults to anthropic with ANTHROPIC_API_KEY', () => {
   const cfg = loadConfig({ ANTHROPIC_API_KEY: 'sk-ant-1' } as NodeJS.ProcessEnv);
@@ -27,4 +37,41 @@ test('DAEDALUS_MODEL and BASE_URL pass through', () => {
 
 test('missing key throws helpful error', () => {
   assert.throws(() => loadConfig({} as NodeJS.ProcessEnv), /API key/);
+});
+
+test('DAEDALUS_CONFIG_PATH file merges under env-provided fields and exposes file-only fields', () => {
+  const configPath = tempConfigFile(JSON.stringify({
+    provider: 'openai',
+    apiKey: 'sk-file',
+    model: 'gpt-4o-mini',
+    baseURL: 'http://file.local',
+  }));
+  const cfg = loadConfig({
+    DAEDALUS_CONFIG_PATH: configPath,
+    DAEDALUS_MODEL: 'env-model', // env wins over file
+  } as NodeJS.ProcessEnv);
+  assert.equal(cfg.provider, 'openai');          // from file (no env provider)
+  assert.equal(cfg.apiKey, 'sk-file');           // from file (no env key)
+  assert.equal(cfg.model, 'env-model');          // env overrides file
+  assert.equal(cfg.baseURL, 'http://file.local'); // file-only field appears
+});
+
+test('null config file content falls back to defaults without throwing', () => {
+  const configPath = tempConfigFile('null');
+  const cfg = loadConfig({
+    DAEDALUS_CONFIG_PATH: configPath,
+    ANTHROPIC_API_KEY: 'sk-ant-1',
+  } as NodeJS.ProcessEnv);
+  assert.equal(cfg.provider, 'anthropic');
+  assert.equal(cfg.apiKey, 'sk-ant-1');
+});
+
+test('config file with null provider field falls back to defaults', () => {
+  const configPath = tempConfigFile(JSON.stringify({ provider: null }));
+  const cfg = loadConfig({
+    DAEDALUS_CONFIG_PATH: configPath,
+    ANTHROPIC_API_KEY: 'sk-ant-1',
+  } as NodeJS.ProcessEnv);
+  assert.equal(cfg.provider, 'anthropic');
+  assert.equal(cfg.apiKey, 'sk-ant-1');
 });
