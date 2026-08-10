@@ -60,17 +60,26 @@ export function toOpenAIBody(params: ChatParams): Record<string, unknown> {
   return body;
 }
 
-export function openaiEventsToIR(payloads: Record<string, unknown>[]): StreamEvent[] {
-  const events: StreamEvent[] = [];
-  const textParts: string[] = [];
-  const calls = new Map<number, { id: string; name: string; argParts: string[]; started: boolean }>();
+/**
+ * Stateful SSE → IR converter for OpenAI chat completions. Text and tool-call
+ * fragments arrive across many `data:` payloads; this carries the partial state
+ * between payloads so deltas can be yielded live as each payload lands, and
+ * builds the terminal 'done' message from the accumulated state when the stream
+ * ends — whether via the `[DONE]` sentinel or, for endpoints that omit it, a
+ * plain connection close.
+ */
+export class OpenAISSEConverter {
+  private textParts: string[] = [];
+  private calls = new Map<number, { id: string; name: string; argParts: string[]; started: boolean }>();
+  private doneEmitted = false;
 
-  for (const p of payloads) {
-    const choices = (p.choices ?? []) as Record<string, unknown>[];
+  push(payload: Record<string, unknown>): StreamEvent[] {
+    const events: StreamEvent[] = [];
+    const choices = (payload.choices ?? []) as Record<string, unknown>[];
     for (const choice of choices) {
       const delta = (choice.delta ?? {}) as Record<string, unknown>;
       if (typeof delta.content === 'string' && delta.content) {
-        textParts.push(delta.content);
+        this.textParts.push(delta.content);
         events.push({ type: 'text_delta', text: delta.content });
       }
       const tcs = delta.tool_calls as Record<string, unknown>[] | undefined;
@@ -80,8 +89,8 @@ export function openaiEventsToIR(payloads: Record<string, unknown>[]): StreamEve
           const fn = (tc.function ?? {}) as Record<string, unknown>;
           const fnName = typeof fn.name === 'string' ? fn.name : undefined;
           const args = typeof fn.arguments === 'string' ? fn.arguments : '';
-          if (!calls.has(idx)) calls.set(idx, { id: '', name: '', argParts: [], started: false });
-          const call = calls.get(idx)!;
+          if (!this.calls.has(idx)) this.calls.set(idx, { id: '', name: '', argParts: [], started: false });
+          const call = this.calls.get(idx)!;
           if (tc.id) call.id = tc.id as string;
           if (fnName) call.name = fnName;
           if (!call.started && call.id && call.name) {
@@ -94,23 +103,36 @@ export function openaiEventsToIR(payloads: Record<string, unknown>[]): StreamEve
           }
         }
       }
-      if (typeof choice.finish_reason === 'string' && choice.finish_reason) {
-        const content: ContentBlock[] = [];
-        if (textParts.length) content.push({ type: 'text', text: textParts.join('') });
-        for (const call of calls.values()) {
-          if (!call.id || !call.name) continue;
-          let input: unknown = {};
-          try { input = JSON.parse(call.argParts.join('')); } catch { input = call.argParts.join(''); }
-          content.push({ type: 'tool_call', id: call.id, name: call.name, input });
-        }
-        events.push({ type: 'done', message: { role: 'assistant', content } });
-      }
     }
-    if (p.error) {
-      const err = p.error as { message?: string };
+    if (payload.error) {
+      const err = payload.error as { message?: string };
       events.push({ type: 'error', error: new AiError('server', err?.message ?? 'unknown error') });
     }
+    return events;
   }
+
+  /** Terminal 'done' event built from the accumulated stream state; [] if nothing arrived. */
+  done(): StreamEvent[] {
+    if (this.doneEmitted) return [];
+    this.doneEmitted = true;
+    const content: ContentBlock[] = [];
+    if (this.textParts.length) content.push({ type: 'text', text: this.textParts.join('') });
+    for (const call of this.calls.values()) {
+      if (!call.id || !call.name) continue;
+      let input: unknown = {};
+      try { input = JSON.parse(call.argParts.join('')); } catch { input = call.argParts.join(''); }
+      content.push({ type: 'tool_call', id: call.id, name: call.name, input });
+    }
+    if (content.length === 0) return [];
+    return [{ type: 'done', message: { role: 'assistant', content } }];
+  }
+}
+
+export function openaiEventsToIR(payloads: Record<string, unknown>[]): StreamEvent[] {
+  const converter = new OpenAISSEConverter();
+  const events: StreamEvent[] = [];
+  for (const p of payloads) events.push(...converter.push(p));
+  events.push(...converter.done());
   return events;
 }
 
@@ -129,29 +151,30 @@ export function createOpenAIClient(config: OpenAIClientConfig): import('../types
         if (e instanceof AiError) { yield { type: 'error', error: e }; return; }
         throw e;
       }
+      const converter = new OpenAISSEConverter();
       try {
-        // text_delta and tool_call fragments accumulate across payloads
-        // (openaiEventsToIR carries function-local state), so buffer all
-        // payloads and run the batch converter once at the [DONE] sentinel.
-        const accumulated: Record<string, unknown>[] = [];
+        // Deltas yield live as each payload arrives; the terminal 'done' is
+        // built from accumulated state at [DONE] or, for endpoints that omit
+        // the sentinel (some OpenAI-compatible servers close the connection
+        // instead), when the stream ends — a missing [DONE] no longer swallows
+        // the whole response.
         for await (const data of parseSseStream(stream)) {
           if (data === '[DONE]') {
-            for (const ev of openaiEventsToIR(accumulated)) yield ev;
-            break;
+            yield* converter.done();
+            return;
           }
           if (!data) continue;
           let payload: Record<string, unknown>;
           try { payload = JSON.parse(data); } catch { throw new AiError('parse', `bad SSE JSON: ${data.slice(0, 100)}`); }
-          accumulated.push(payload);
-          // OpenAI does NOT send [DONE] after a top-level error payload — flush
-          // the accumulated batch now so prior text/tool deltas survive and the
-          // error event surfaces to the caller instead of the stream silently
-          // ending with zero events.
-          if (payload.error) {
-            for (const ev of openaiEventsToIR(accumulated)) yield ev;
-            return;
+          for (const ev of converter.push(payload)) {
+            yield ev;
+            // OpenAI sends a top-level error payload (no [DONE] after it) on
+            // mid-stream failure — surface the error and stop; deltas already
+            // yielded before it survive.
+            if (ev.type === 'error') return;
           }
         }
+        yield* converter.done();
       } catch (e) {
         if (e instanceof AiError) { yield { type: 'error', error: e }; return; }
         throw e;

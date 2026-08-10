@@ -134,3 +134,44 @@ test('streamChat flushes and yields an error event when the stream ends with a t
   assert.equal(errEv.error.message, 'boom: mid-stream failure');
   assert.equal(errEv.error.kind, 'server');
 });
+
+test('streamChat flushes accumulated output when the stream closes WITHOUT a [DONE] sentinel', async () => {
+  const origFetch = globalThis.fetch;
+  // Some OpenAI-compatible servers (Ollama, vLLM, custom gateways) close the
+  // connection after the last chunk without sending `data: [DONE]` — the
+  // accumulated deltas must still be emitted as a terminal 'done' message
+  // instead of being swallowed (which previously ended in a protocol error).
+  const payloads = [
+    { choices: [{ delta: { content: 'Hello' } }] },
+    { choices: [{ delta: { content: ' no-DONE' } }] },
+    { choices: [{ delta: {}, finish_reason: 'stop' }] },
+  ];
+  const sseChunks = payloads.map((p) => `data: ${JSON.stringify(p)}\n\n`);
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of sseChunks) controller.enqueue(new TextEncoder().encode(chunk));
+      controller.close();
+    },
+  });
+  globalThis.fetch = mock.fn(async () => new Response(stream, { status: 200 })) as typeof fetch;
+
+  const client = createOpenAIClient({ apiKey: 'k', baseURL: 'https://x', maxRetries: 0 });
+  const events: StreamEvent[] = [];
+  for await (const ev of client.streamChat({
+    model: 'm',
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+  })) {
+    events.push(ev);
+  }
+  globalThis.fetch = origFetch;
+
+  // Deltas streamed live, and a clean close emits the terminal 'done' from the
+  // accumulated state — the response is not lost.
+  const types = events.map((e) => e.type);
+  assert.deepEqual(types, ['text_delta', 'text_delta', 'done']);
+  const done = events.find((e) => e.type === 'done')!;
+  assert.equal(done.type, 'done');
+  const text = done.message.content.find((c) => c.type === 'text')!;
+  assert.equal(text.type, 'text');
+  assert.equal(text.text, 'Hello no-DONE');
+});
