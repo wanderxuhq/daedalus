@@ -69,9 +69,12 @@ function createLineReader(input: Readable, output: Writable) {
 }
 
 /**
- * First-run setup wizard. Asks for provider, API key, model and base URL and
- * writes them to the config file. Returns the resolved config, or null when
- * the user aborts (no key entered). Never throws on user input.
+ * First-run setup wizard. Asks for base URL, API key and model and writes
+ * them to the config file. The provider is derived from the base URL: a URL
+ * naming a provider (anthropic/openai) is taken at face value, a blank URL
+ * keeps the fallback, and any other (ambiguous) URL is confirmed with an
+ * API-format question. Returns the resolved config, or null when the user
+ * aborts (no key entered). Never throws on user input.
  */
 export async function runSetupWizard(opts: SetupOptions = {}): Promise<DaedalusConfig | null> {
   // Honor DAEDALUS_CONFIG_PATH like src/config/config.ts does, so the wizard
@@ -89,11 +92,35 @@ export async function runSetupWizard(opts: SetupOptions = {}): Promise<DaedalusC
   const reader = createLineReader(input, out);
   try {
     const fallback = opts.defaultProvider ?? existing.provider ?? 'anthropic';
-    const providerAnswer = (await reader.readLine(`Provider — 1) Anthropic  2) OpenAI  [${fallback}]: `)).trim().toLowerCase();
-    const provider: AiProviderName =
-      providerAnswer === '1' || providerAnswer === 'anthropic' ? 'anthropic'
-      : providerAnswer === '2' || providerAnswer === 'openai' ? 'openai'
-      : fallback;
+
+    const baseURLDefault = existing.baseURL ? ` [${existing.baseURL}]` : '';
+    const baseURL = (await reader.readLine(`Base URL (blank for ${PROVIDER_LABEL[fallback]} default${baseURLDefault}, or an OpenAI-compatible endpoint): `)).trim() || existing.baseURL;
+
+    // No provider question — the base URL decides the wire format. A URL that
+    // names a provider is taken at face value, and an existing config already
+    // pins the provider; anything else (a proxy, a local model server, a
+    // gateway) is confirmed with a format question before the provider is
+    // recorded, so an Anthropic-format gateway behind a neutral URL is not
+    // silently misclassified as OpenAI.
+    let provider: AiProviderName;
+    if (!baseURL) {
+      provider = fallback;
+    } else {
+      const lower = baseURL.toLowerCase();
+      if (lower.includes('anthropic')) {
+        provider = 'anthropic';
+      } else if (lower.includes('openai')) {
+        provider = 'openai';
+      } else if (existing.provider) {
+        provider = existing.provider;
+      } else {
+        const formatDefault = opts.defaultProvider ?? 'openai';
+        const answer = (await reader.readLine(`API format — 1) OpenAI-compatible  2) Anthropic  [${PROVIDER_LABEL[formatDefault]}]: `)).trim().toLowerCase();
+        provider = answer === '2' || answer === 'anthropic' ? 'anthropic'
+          : answer === '1' || answer === 'openai' ? 'openai'
+            : formatDefault;
+      }
+    }
 
     const apiKey = (await reader.readLine(`API key for ${PROVIDER_LABEL[provider]} (required): `)).trim();
     if (!apiKey) {
@@ -103,8 +130,6 @@ export async function runSetupWizard(opts: SetupOptions = {}): Promise<DaedalusC
 
     const modelDefault = existing.model ? ` [${existing.model}]` : '';
     const model = (await reader.readLine(`Model (blank for ${PROVIDER_LABEL[provider]} default${modelDefault}): `)).trim() || existing.model;
-    const baseURLDefault = existing.baseURL ? ` [${existing.baseURL}]` : '';
-    const baseURL = (await reader.readLine(`Base URL (blank for default${baseURLDefault}): `)).trim() || existing.baseURL;
 
     const file: Record<string, string> = { provider, apiKey };
     if (model) file.model = model;

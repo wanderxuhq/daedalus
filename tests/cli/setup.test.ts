@@ -10,6 +10,7 @@ import { runSetupWizard } from '../../src/cli/setup.ts';
  * Drive the wizard with canned answers; capture output; keep config in a tmp dir.
  * Answers are written upfront into a PassThrough (never ended) — the wizard's
  * own line reader consumes them, so no readline flow-control quirks apply.
+ * Answer order: base URL, [API-format answer if the URL is ambiguous], API key, model.
  */
 function harness(answers: string[], opts: { prewrite?: Record<string, unknown>; defaultProvider?: 'openai' | 'anthropic' } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'dae-setup-'));
@@ -33,24 +34,57 @@ function harness(answers: string[], opts: { prewrite?: Record<string, unknown>; 
   };
 }
 
-test('wizard writes config.json for the chosen provider and key', async () => {
-  const h = harness(['2', 'sk-test-123', '', '']);
+test('wizard writes config.json for the entered base URL, key and model', async () => {
+  // localhost URL is ambiguous → format question asked first (answer '1' = OpenAI-compatible).
+  const h = harness(['http://localhost:11434/v1', '1', 'sk-test-123', 'gpt-4o-mini']);
   const cfg = await h.promise;
   assert.ok(cfg);
-  assert.equal(cfg!.provider, 'openai');
+  assert.equal(cfg!.provider, 'openai'); // non-Anthropic URL → OpenAI-compatible
   assert.equal(cfg!.apiKey, 'sk-test-123');
-  assert.equal(cfg!.model, undefined);
+  assert.equal(cfg!.baseURL, 'http://localhost:11434/v1');
+  assert.equal(cfg!.model, 'gpt-4o-mini');
   const written = JSON.parse(readFileSync(h.configPath, 'utf8')) as Record<string, string>;
   assert.equal(written.provider, 'openai');
   assert.equal(written.apiKey, 'sk-test-123');
-  assert.equal(written.model, undefined);
+  assert.equal(written.baseURL, 'http://localhost:11434/v1');
+  assert.equal(written.model, 'gpt-4o-mini');
   assert.match(h.text(), /first-time setup/);
   assert.match(h.text(), /Saved/);
   rmSync(h.dir, { recursive: true, force: true });
 });
 
+test('wizard infers anthropic provider from an api.anthropic.com base URL', async () => {
+  const h = harness(['https://api.anthropic.com', 'sk-ant-1', '']);
+  const cfg = await h.promise;
+  assert.ok(cfg);
+  assert.equal(cfg!.provider, 'anthropic');
+  assert.equal(cfg!.baseURL, 'https://api.anthropic.com');
+  const written = JSON.parse(readFileSync(h.configPath, 'utf8')) as Record<string, string>;
+  assert.equal(written.provider, 'anthropic');
+  assert.equal(written.baseURL, 'https://api.anthropic.com');
+  rmSync(h.dir, { recursive: true, force: true });
+});
+
+test('wizard asks a format question for an ambiguous URL and honors an Anthropic answer', async () => {
+  const h = harness(['https://gateway.example.com/v1', '2', 'sk-ant-1', '']);
+  const cfg = await h.promise;
+  assert.ok(cfg);
+  assert.equal(cfg!.provider, 'anthropic');
+  assert.match(h.text(), /API format/);
+  rmSync(h.dir, { recursive: true, force: true });
+});
+
+test('wizard infers openai from a URL naming openai without asking', async () => {
+  const h = harness(['https://api.openai.com/v1', 'sk-openai-1', '']);
+  const cfg = await h.promise;
+  assert.ok(cfg);
+  assert.equal(cfg!.provider, 'openai');
+  assert.doesNotMatch(h.text(), /API format/);
+  rmSync(h.dir, { recursive: true, force: true });
+});
+
 test('wizard aborts without writing when the key is blank', async () => {
-  const h = harness(['1', '', '', '']);
+  const h = harness(['', '']);
   const cfg = await h.promise;
   assert.equal(cfg, null);
   assert.equal(existsSync(h.configPath), false);
@@ -59,19 +93,20 @@ test('wizard aborts without writing when the key is blank', async () => {
 });
 
 test('wizard preserves existing file fields left blank', async () => {
-  const h = harness(['1', 'sk-new', '', ''], { prewrite: { provider: 'openai', baseURL: 'http://x.local' } });
+  const h = harness(['', 'sk-new', ''], { prewrite: { provider: 'openai', baseURL: 'http://x.local' } });
   const cfg = await h.promise;
   assert.ok(cfg);
-  assert.equal(cfg!.provider, 'anthropic');
+  assert.equal(cfg!.provider, 'openai'); // blank base URL → existing provider
+  assert.equal(cfg!.apiKey, 'sk-new');
   assert.equal(cfg!.baseURL, 'http://x.local');
   const written = JSON.parse(readFileSync(h.configPath, 'utf8')) as Record<string, string>;
-  assert.equal(written.provider, 'anthropic');
+  assert.equal(written.provider, 'openai');
   assert.equal(written.baseURL, 'http://x.local');
   rmSync(h.dir, { recursive: true, force: true });
 });
 
-test('wizard defaults to defaultProvider when the answer is blank', async () => {
-  const h = harness(['', 'sk-openai-1', '', ''], { defaultProvider: 'openai' });
+test('wizard defaults to defaultProvider when the base URL is blank', async () => {
+  const h = harness(['', 'sk-openai-1', ''], { defaultProvider: 'openai' });
   const cfg = await h.promise;
   assert.ok(cfg);
   assert.equal(cfg!.provider, 'openai');
