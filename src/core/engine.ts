@@ -12,7 +12,8 @@ import { buildSystemPrompt } from './system-prompt.ts';
 export interface EngineOptions {
   client: AiClient;
   cwd: string;
-  askPermission: (action: string, target: string) => Promise<boolean>;
+  /** Optional; the REPL installs its own via {@link setAskPermission}. Defaults to deny. */
+  askPermission?: (action: string, target: string) => Promise<boolean>;
   skillDirs?: string[];
   maxIterations?: number;
 }
@@ -35,13 +36,18 @@ export class DaedalusEngine {
     this.registry = new SkillRegistry(opts.skillDirs);
     this.client = opts.client;
     this.cwd = opts.cwd;
-    this.askPermission = opts.askPermission;
+    this.askPermission = opts.askPermission ?? (async () => false);
     this.maxIterations = opts.maxIterations;
     this.tools = [...builtinTools, createSkillTool(this.registry, this.session)];
   }
 
   subscribe(handler: (ev: CoreEvent) => void): () => void {
     return this.session.bus.subscribe(handler);
+  }
+
+  /** Replace the permission handler (the REPL installs its own here). */
+  setAskPermission(ask: (action: string, target: string) => Promise<boolean>): void {
+    this.askPermission = ask;
   }
 
   get skills(): SkillInfo[] {

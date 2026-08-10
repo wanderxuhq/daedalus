@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { handleReplLine } from '../../src/cli/repl.ts';
+import { handleReplLine, isNewlineKey } from '../../src/cli/repl.ts';
 import type { SkillInfo } from '../../src/core/skills/types.ts';
 import type { CoreEvent } from '../../src/core/events.ts';
 
@@ -43,4 +43,36 @@ test('unknown /command returns handled but no crash', async () => {
 test('plain prompt returns unhandled', async () => {
   const engine = new FakeEngine();
   assert.equal(await handleReplLine('hello world', engine), 'unhandled');
+});
+
+test('isNewlineKey: plain Enter (CR) is a submit, not a newline', () => {
+  assert.equal(isNewlineKey({ name: 'return', sequence: '\r', ctrl: false, shift: false, meta: false }), false);
+});
+
+test('isNewlineKey: LF (Ctrl/Shift+Enter on many terminals) is a newline', () => {
+  assert.equal(isNewlineKey({ name: 'enter', sequence: '\n', ctrl: false, shift: false, meta: false }), true);
+});
+
+test('isNewlineKey: CSI-u modified Enter (13;Nu, N != 1) is a newline', () => {
+  // VSCode / Windows Terminal / kitty encode Ctrl+Enter as 13;5u, Shift+Enter as 13;2u.
+  assert.equal(isNewlineKey({ name: undefined, sequence: '\x1b[13;5u' }), true); // Ctrl
+  assert.equal(isNewlineKey({ name: undefined, sequence: '\x1b[13;2u' }), true); // Shift
+  assert.equal(isNewlineKey({ name: undefined, sequence: '\x1b[13;6u' }), true); // Ctrl+Shift
+});
+
+test('isNewlineKey: bare CSI-u (13;u / 13;1u) is an unmodified Enter', () => {
+  assert.equal(isNewlineKey({ name: undefined, sequence: '\x1b[13;u' }), false);
+  assert.equal(isNewlineKey({ name: undefined, sequence: '\x1b[13;1u' }), false);
+});
+
+test('isNewlineKey: xterm-style modified Enter (F3 + modifier) is a newline', () => {
+  assert.equal(isNewlineKey({ name: 'f3', sequence: '\x1b[13;5~', ctrl: true }), true);
+  assert.equal(isNewlineKey({ name: 'f3', sequence: '\x1b[13;2~', shift: true }), true);
+  assert.equal(isNewlineKey({ name: 'f3', sequence: '\x1b[13~' }), false); // plain F3
+});
+
+test('isNewlineKey: other keys and undefined are not newlines', () => {
+  assert.equal(isNewlineKey(undefined), false);
+  assert.equal(isNewlineKey({ name: 'a', sequence: 'a' }), false);
+  assert.equal(isNewlineKey({ name: 'return', sequence: '\r', shift: true }), false);
 });

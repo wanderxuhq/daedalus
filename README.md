@@ -81,7 +81,7 @@ Standard provider keys are also honored when `DAEDALUS_API_KEY` is not set:
 - `ANTHROPIC_API_KEY` — used when the active provider is `anthropic`
 - `OPENAI_API_KEY` — used when the active provider is `openai`
 
-If no key can be found for the active provider, Daedalus starts an interactive first-run setup wizard that asks for provider, API key, model and base URL, and writes them to `~/.daedalus/config.json` for you. Press Ctrl-C or leave the key blank to skip the wizard and set the env vars yourself.
+If no key can be found for the active provider, Daedalus starts an interactive first-run setup wizard that asks for a base URL, API key and model, and writes them to `~/.daedalus/config.json` for you. The provider is derived from the base URL: a URL that names a provider (anthropic/openai) is taken at face value, and an ambiguous URL (a proxy, local endpoint, or gateway) is confirmed with an API-format question before the provider is recorded. Press Ctrl-C or leave the key blank to skip the wizard and set the env vars yourself.
 
 ## Usage
 
@@ -107,7 +107,7 @@ Once started you land in the REPL prompt (`›`):
 | `/skills` | List installed skills |
 | `/<skill-name>` | Load a skill (e.g. `/review`) into the current session |
 
-Any other input is a prompt for the agent. **Multi-line input:** type a second line (or blank line or `/run`) to submit — the buffer accumulates one line before the next input submits it. The agent runs, streams its response and tool calls, executes tools (asking `y/n` before shell commands), and reports the result.
+Any other input is a prompt for the agent — a prompt submits on the first Enter. For multi-line input, press **Ctrl+Enter** (or, on terminals that distinguish it, **Shift+Enter**) to continue the prompt onto the next line, or end a line with `\` to do the same; then submit with `/run` (or an empty line). The agent runs, streams its response and tool calls, executes tools (asking `y/n` before shell commands), and reports the result.
 
 ## Tools
 

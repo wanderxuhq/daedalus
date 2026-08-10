@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import readline from 'node:readline/promises';
 import { loadConfig, missingProvider } from '../config/config.ts';
 import type { DaedalusConfig } from '../config/config.ts';
 import type { AiProviderName } from '../ai/index.ts';
@@ -43,18 +42,11 @@ const config = {
   model: flags.model ?? base.model,
 };
 const client = createAiClient(config);
-const askPermission = async (action: string, target: string): Promise<boolean> => {
-  const rl = readline.createInterface({ input: process.stdin, output: process.stdout });
-  const answer = (await rl.question(`${ANSI.yellow}Allow ${action}? ${target} [y/n] ${ANSI.reset}`)).trim().toLowerCase();
-  rl.close();
-  return answer === 'y' || answer === 'yes';
-};
 
 console.log(`${ANSI.bold}Daedalus${ANSI.reset} — agent ready (${config.provider}${config.model ? ` / ${config.model}` : ''})`);
 const engine = new DaedalusEngine({
   client,
   cwd: process.cwd(),
-  askPermission,
 });
 engine.subscribe(renderEvent);
 await runRepl(engine);
