@@ -8,6 +8,7 @@ export type CoreEvent =
   | { type: 'thinking_delta'; thinking: string }
   | { type: 'tool_call_start'; id: string; name: string }
   | { type: 'tool_call_delta'; id: string; inputDelta: string }
+  | { type: 'tool_result'; id: string; name: string; input: unknown; content: string; isError?: boolean }
   | { type: 'skill_load'; name: string }
   | { type: 'context_trim'; dropped: number; kept: number }
   | { type: 'done'; message: Message }

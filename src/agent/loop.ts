@@ -100,6 +100,16 @@ export async function runAgent(params: RunAgentParams): Promise<string> {
           try { res = await tool.execute(call.input, { cwd: params.cwd, askPermission: params.askPermission }); }
           catch (e) { res = { content: (e as Error).message, isError: true }; }
         }
+        // Surface the result to the UI (render.ts) as well as to the model, so a
+        // tool card with its output can be drawn — like Claude Code, not raw JSON.
+        session.bus.emit({
+          type: 'tool_result',
+          id: call.id,
+          name: call.name,
+          input: call.input,
+          content: res.content,
+          isError: res.isError,
+        });
         results.push(res);
       }
       const resultBlocks = calls.map((call, idx) => {

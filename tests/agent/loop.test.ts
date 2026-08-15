@@ -149,6 +149,29 @@ test('broadcasts stream events as core events on session bus', async () => {
   assert.ok(got.includes('done'));
 });
 
+test('broadcasts a tool_result event per executed tool with input and content', async () => {
+  let iterations = 0;
+  const client: AiClient = {
+    async *streamChat() {
+      iterations++;
+      if (iterations === 1) {
+        yield { type: 'done', message: { role: 'assistant', content: [{ type: 'tool_call', id: 't1', name: 'myTool', input: { text: 'x' } }] } };
+      } else {
+        yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] } };
+      }
+    },
+  };
+  const session = makeSession();
+  const results: { name: string; content: string }[] = [];
+  session.bus.subscribe((ev) => {
+    if (ev.type === 'tool_result') results.push({ name: ev.name, content: ev.content });
+  });
+  await runAgent({ client, session, prompt: 'hi', tools: [echoTool('myTool')], ...CTX });
+  assert.equal(results.length, 1);
+  assert.equal(results[0].name, 'myTool');
+  assert.equal(results[0].content, 'echo:x');
+});
+
 test('messages accumulate in session across consecutive runAgent calls', async () => {
   const session = makeSession();
   await runAgent({
