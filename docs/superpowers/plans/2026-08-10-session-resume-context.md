@@ -228,7 +228,7 @@ export function estimateTokens(messages: Message[]): number {
       const text = b.type === 'text' ? b.text
         : b.type === 'thinking' ? b.thinking
         : b.type === 'tool_result' ? b.content
-        : b.type === 'tool_call' ? JSON.stringify(b.input) : '';
+        : b.type === 'tool_call' ? JSON.stringify(b.input) ?? '' : '';
       n += Math.ceil(text.length / 4);
       n += 2;
     }
