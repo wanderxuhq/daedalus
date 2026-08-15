@@ -108,3 +108,30 @@ test('maxContextTokens from the config file is exposed', () => {
   const cfg = loadConfig({ DAEDALUS_CONFIG_PATH: configPath } as NodeJS.ProcessEnv);
   assert.equal(cfg.maxContextTokens, 200000);
 });
+
+test('DAEDALUS_AUTO_APPROVE parses into autoApprove', () => {
+  const cfg = loadConfig({ ANTHROPIC_API_KEY: 'sk-ant-1', DAEDALUS_CONFIG_PATH: NO_CONFIG_PATH, DAEDALUS_AUTO_APPROVE: '1' } as NodeJS.ProcessEnv);
+  assert.equal(cfg.autoApprove, true);
+});
+
+test('DAEDALUS_AUTO_APPROVE=0 disables autoApprove', () => {
+  const cfg = loadConfig({ ANTHROPIC_API_KEY: 'sk-ant-1', DAEDALUS_CONFIG_PATH: NO_CONFIG_PATH, DAEDALUS_AUTO_APPROVE: '0' } as NodeJS.ProcessEnv);
+  assert.equal(cfg.autoApprove, false);
+});
+
+test('DAEDALUS_AUTO_APPROVE=false disables autoApprove', () => {
+  const cfg = loadConfig({ ANTHROPIC_API_KEY: 'sk-ant-1', DAEDALUS_CONFIG_PATH: NO_CONFIG_PATH, DAEDALUS_AUTO_APPROVE: 'false' } as NodeJS.ProcessEnv);
+  assert.equal(cfg.autoApprove, false);
+});
+
+test('autoApprove from the config file is exposed', () => {
+  const configPath = tempConfigFile(JSON.stringify({ provider: 'openai', apiKey: 'sk-file', autoApprove: true }));
+  const cfg = loadConfig({ DAEDALUS_CONFIG_PATH: configPath } as NodeJS.ProcessEnv);
+  assert.equal(cfg.autoApprove, true);
+});
+
+test('env DAEDALUS_AUTO_APPROVE overrides the config file', () => {
+  const configPath = tempConfigFile(JSON.stringify({ provider: 'openai', apiKey: 'sk-file', autoApprove: true }));
+  const cfg = loadConfig({ DAEDALUS_CONFIG_PATH: configPath, DAEDALUS_AUTO_APPROVE: '0' } as NodeJS.ProcessEnv);
+  assert.equal(cfg.autoApprove, false);
+});

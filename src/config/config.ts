@@ -9,6 +9,8 @@ export interface DaedalusConfig {
   baseURL?: string;
   model?: string;
   maxContextTokens?: number;
+  /** Auto-approve tool permission prompts (bash/write) instead of asking y/n. */
+  autoApprove?: boolean;
 }
 
 interface FileConfig {
@@ -17,6 +19,7 @@ interface FileConfig {
   baseURL?: string;
   model?: string;
   maxContextTokens?: number;
+  autoApprove?: boolean;
 }
 
 function readFileConfig(env: NodeJS.ProcessEnv): FileConfig {
@@ -43,12 +46,17 @@ export function resolveConfig(env: NodeJS.ProcessEnv = process.env): DaedalusCon
   const envTokens = env.DAEDALUS_MAX_CONTEXT_TOKENS === undefined ? undefined : Number(env.DAEDALUS_MAX_CONTEXT_TOKENS);
   const rawTokens = envTokens ?? file.maxContextTokens;
   const maxContextTokens = typeof rawTokens === 'number' && Number.isFinite(rawTokens) ? rawTokens : undefined;
+  const envAuto = env.DAEDALUS_AUTO_APPROVE;
+  const autoApprove = envAuto === undefined
+    ? file.autoApprove
+    : envAuto !== '' && envAuto !== '0' && envAuto.toLowerCase() !== 'false';
   return {
     provider,
     apiKey,
     baseURL: env.DAEDALUS_BASE_URL ?? file.baseURL,
     model: env.DAEDALUS_MODEL ?? file.model,
     ...(maxContextTokens !== undefined ? { maxContextTokens } : {}),
+    ...(autoApprove !== undefined ? { autoApprove } : {}),
   };
 }
 
