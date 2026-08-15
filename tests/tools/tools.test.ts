@@ -54,3 +54,24 @@ test('bash denied by permission returns isError', async () => {
   const r = await bashTool.execute({ command: 'echo hi' }, makeCtx({ askPermission: async () => false }));
   assert.equal(r.isError, true);
 });
+
+test('askPermission=true lets bash run (auto-approve mode needs no prompt)', async () => {
+  const bashTool = tools.find((t) => t.name === 'bash')!;
+  const r = await bashTool.execute({ command: 'echo hi' }, makeCtx({ askPermission: async () => true }));
+  assert.equal(r.isError, undefined); // success results carry no isError flag
+  assert.equal(r.content.trim(), 'hi');
+});
+
+test('askPermission=true lets write overwrite an existing file (auto-approve mode needs no prompt)', async () => {
+  const dir = join(tmpdir(), `dae-auto-${Date.now()}`);
+  mkdirSync(dir, { recursive: true });
+  const file = join(dir, 'f.txt');
+  writeFileSync(file, 'old');
+  const writeTool = tools.find((t) => t.name === 'write')!;
+  const r = await writeTool.execute({ path: file, content: 'new' }, makeCtx({ askPermission: async () => true }));
+  assert.equal(r.isError, undefined); // overwrite allowed, not denied
+  const readTool = tools.find((t) => t.name === 'read')!;
+  const readBack = await readTool.execute({ path: file }, makeCtx());
+  assert.equal(readBack.content, 'new');
+  rmSync(dir, { recursive: true, force: true });
+});
