@@ -41,6 +41,14 @@ export interface EngineLike {
 
 export type ReplLineResult = 'exit' | 'handled' | 'unhandled';
 
+/**
+ * Resolve whether the REPL should auto-approve tool permission prompts.
+ * `--yes` forces auto-approve on; otherwise the config's `autoApprove` decides.
+ */
+export function resolveAutoApprove(opts: { yes?: boolean; autoApprove?: boolean }): boolean {
+  return opts.yes === true || opts.autoApprove === true;
+}
+
 const RESERVED = new Set(['exit', 'quit', 'help', 'skills', 'run', 'sessions', 'resume']);
 
 /** Handle one line of REPL input as a command. Returns how it was handled. */
@@ -93,7 +101,7 @@ export async function handleReplLine(line: string, engine: EngineLike): Promise<
   return 'unhandled';
 }
 
-export async function runRepl(engine: EngineLike): Promise<void> {
+export async function runRepl(engine: EngineLike, opts: { autoApprove?: boolean } = {}): Promise<void> {
   const rl = readline.createInterface({ input, output, prompt: `${ANSI.green}›${ANSI.reset} ` });
 
   // Permission questions (bash/write tools) are answered on this SAME interface,
@@ -101,10 +109,12 @@ export async function runRepl(engine: EngineLike): Promise<void> {
   // double-echoes input and leaves the loop's promise unsettled ("Detected
   // unsettled top-level await"). While a question is open, keypresses build the
   // answer and are never forwarded, so readline never assembles them into a line
-  // and no spurious prompt is produced.
+  // and no spurious prompt is produced. In auto-approve mode no question is ever
+  // shown: the handler resolves true immediately, so tools run unattended.
   let newlineKeyed = false;
   let permission: { resolve: (ok: boolean) => void; buf: string } | null = null;
   const askPermission = (action: string, target: string): Promise<boolean> => {
+    if (opts.autoApprove) return Promise.resolve(true);
     output.write(`${ANSI.yellow}Allow ${action}? ${target} [y/n] ${ANSI.reset}`);
     return new Promise((resolve) => { permission = { resolve, buf: '' }; });
   };

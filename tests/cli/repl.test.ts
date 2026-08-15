@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { handleReplLine, isNewlineKey } from '../../src/cli/repl.ts';
+import { handleReplLine, isNewlineKey, resolveAutoApprove } from '../../src/cli/repl.ts';
 import type { SkillInfo } from '../../src/core/skills/types.ts';
 import type { SessionMeta } from '../../src/core/session-store.ts';
 import type { CoreEvent } from '../../src/core/events.ts';
@@ -147,4 +147,15 @@ test('isNewlineKey: other keys and undefined are not newlines', () => {
   assert.equal(isNewlineKey(undefined), false);
   assert.equal(isNewlineKey({ name: 'a', sequence: 'a' }), false);
   assert.equal(isNewlineKey({ name: 'return', sequence: '\r', shift: true }), false);
+});
+
+test('resolveAutoApprove: --yes forces auto-approve on', () => {
+  assert.equal(resolveAutoApprove({ yes: true, autoApprove: false }), true);
+  assert.equal(resolveAutoApprove({ yes: true }), true);
+});
+
+test('resolveAutoApprove: config autoApprove drives the default', () => {
+  assert.equal(resolveAutoApprove({ autoApprove: true }), true);
+  assert.equal(resolveAutoApprove({ autoApprove: false }), false);
+  assert.equal(resolveAutoApprove({}), false);
 });
