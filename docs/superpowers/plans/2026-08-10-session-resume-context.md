@@ -100,12 +100,22 @@ test('estimateTokens counts per-message, per-block, and per-char overhead', () =
   assert.equal(estimateTokens([{ role: 'user', content: [{ type: 'tool_result', toolCallId: 't', content: '0123456789abcdef' }] }]), 10); // 4 + ceil(16/4) + 2
 });
 
-test('keeps the system prefix and drops oldest whole turns', () => {
+test('keeps the system prefix and drops oldest whole turns (big-step to half budget)', () => {
   const msgs: Message[] = [sys(), user('one'), asst('a1'), user('two'), asst('a2'), user('three'), asst('a3'), user('four'), asst('a4')];
   const out = trimHistory(msgs, { maxTokens: 7, estimate: count });
+  // Budget 7 → big-step target 3.5 → keeps 2 whole turns (MIN_KEEP_TURNS floor).
   assert.equal(out[0].role, 'system');
-  assert.ok(out.some((m) => m.content.some((c) => c.type === 'text' && c.text === 'two')));
+  assert.ok(out.some((m) => m.content.some((c) => c.type === 'text' && c.text === 'three')));
   assert.ok(!out.some((m) => m.content.some((c) => c.type === 'text' && c.text === 'one')));
+  assert.ok(!out.some((m) => m.content.some((c) => c.type === 'text' && c.text === 'two')));
+});
+
+test('big-step trims to at most half the budget (rare-trigger headroom)', () => {
+  const msgs: Message[] = [sys(), user('one'), asst('a1'), user('two'), asst('a2'), user('three'), asst('a3'), user('four'), asst('a4'), user('five'), asst('a5'), user('six'), asst('a6')];
+  const out = trimHistory(msgs, { maxTokens: 12, estimate: count });
+  // target = 12/2 = 6; 6 turns → MIN_KEEP_TURNS floor keeps sys + last 2 turns (5 msgs) ≤ 6.
+  assert.ok(count(out) <= 12 / 2, `trimmed ${count(out)} messages, budget 12 → target 6`);
+  assert.equal(out[0].role, 'system');
 });
 
 test('never splits a tool_call from its tool_result', () => {
@@ -264,8 +274,9 @@ function isSkillBody(m: Message): boolean {
 }
 
 /**
- * Drop oldest whole turns until the history fits `maxTokens` (or `MIN_KEEP_TURNS`
- * turns remain), keeping the system prefix and never dropping a protected message
+ * Drop oldest whole turns until the history fits `maxTokens / 2` (the design's
+ * "big-step to 50% of budget" target; or `MIN_KEEP_TURNS` turns remain), keeping the
+ * system prefix and never dropping a protected message
  * (pulling the cut back to keep its whole turn). Returns the input array unchanged
  * when nothing is trimmed, so callers can detect a trim via `!==`.
  */
@@ -287,11 +298,13 @@ export function trimHistory(messages: Message[], opts: TrimOptions): Message[] {
   }
   if (bounds.length === 0) return messages;
 
-  // How many leading turns to drop (grows until within budget / at the floor).
+  // How many leading turns to drop (grows until within half the budget / at the floor).
+  // Big-step (design §4.1): trim to maxTokens/2 so a trim buys headroom and does not
+  // re-trigger the next turn, keeping cache misses rare.
   let cut = 0;
   while (
     cut < bounds.length - MIN_KEEP_TURNS &&
-    estimate([...prefix, ...conversation.slice(bounds[cut])]) > opts.maxTokens
+    estimate([...prefix, ...conversation.slice(bounds[cut])]) > opts.maxTokens / 2
   ) {
     cut++;
   }
@@ -949,6 +962,8 @@ export interface EngineOptions {
   maxIterations?: number;
   /** Seed the session from a persisted state (skips building a new system message). */
   initialState?: SessionState;
+  /** Existing session id to keep writing to (resume). Default: first save() generates one. */
+  sessionId?: string;
   /** When set, the engine persists the session after every run() and dispose(). */
   sessionStore?: SessionStore;
   /** History budget in estimated tokens. Default {@link DEFAULT_MAX_CONTEXT_TOKENS}. */
@@ -965,6 +980,7 @@ export class DaedalusEngine {
   private maxIterations?: number;
   private sessionStore?: SessionStore;
   private maxContextTokens: number;
+  private sessionId: string | undefined;
 
   constructor(opts: EngineOptions) {
     this.session = new Session();
@@ -976,6 +992,7 @@ export class DaedalusEngine {
     this.maxIterations = opts.maxIterations;
     this.sessionStore = opts.sessionStore;
     this.maxContextTokens = opts.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS;
+    this.sessionId = opts.sessionId;
     if (opts.initialState) {
       // Restore verbatim: the persisted system message is reused as-is so the cache
       // prefix stays byte-identical across a resume (design §3.2). Defensive re-add
@@ -1009,7 +1026,7 @@ export class DaedalusEngine {
     return this.registry.list();
   }
 
-  /** Snapshot the current session (used by the CLI for manual saves). */
+  /** Snapshot the current session (persistence + external consumers). */
   getSessionState(): SessionState {
     return this.session.getState();
   }
@@ -1049,7 +1066,9 @@ export class DaedalusEngine {
 
   private async persist(): Promise<void> {
     if (this.sessionStore) {
-      await this.sessionStore.save(this.getSessionState(), { cwd: this.cwd });
+      // Reuse the stable session id (resumed or first-generated) so a session is one
+      // file, not one snapshot per save (design §3.3). save() returns the id used.
+      this.sessionId = await this.sessionStore.save(this.getSessionState(), { id: this.sessionId, cwd: this.cwd });
     }
   }
 }
@@ -1295,12 +1314,14 @@ After `createAiClient(config)`, before building the engine, resolve the session 
 ```ts
 const store = new SessionStore();
 let initialState: SessionState | undefined;
+let sessionId: string | undefined;
 if (flags.resume) {
   const meta = flags.resume === '1' ? await store.latest() : { id: flags.resume };
   if (meta) {
     try {
       const loaded = await store.load(meta.id);
       initialState = { messages: loaded.messages, loadedSkills: loaded.loadedSkills };
+      sessionId = loaded.id; // continue writing to the resumed session's file
       console.log(`${ANSI.dim}resumed session ${loaded.id} (${loaded.messages.length} messages)${ANSI.reset}`);
     } catch (e) {
       console.error(`${ANSI.red}Failed to resume: ${(e as Error).message}${ANSI.reset}`);
@@ -1318,6 +1339,7 @@ const engine = new DaedalusEngine({
   client,
   cwd: process.cwd(),
   initialState,
+  sessionId,
   sessionStore: store,
   maxContextTokens: base.maxContextTokens,
 });
@@ -1359,9 +1381,9 @@ export { DEFAULT_MAX_CONTEXT_TOKENS } from './core/engine.ts';
 - [ ] **Step 6: Update README**
 
 Add a "Sessions & context" section documenting:
-- Auto-save: each completed `run()` (and `dispose()`) persists the session to `~/.daedalus/sessions/<id>.json` (override dir with `DAEDALUS_SESSIONS_DIR`).
-- Resume: `daedalus --resume` (latest) / `daedalus --resume <id>` (specific). The persisted system prompt is reused verbatim so the cache prefix stays stable.
-- Budget: history is trimmed at whole-turn boundaries when the estimate exceeds `maxContextTokens` (default 100,000, env `DAEDALUS_MAX_CONTEXT_TOKENS`, config `maxContextTokens`); skill bodies are never trimmed; a `— context trimmed: N messages kept —` line is shown.
+- Auto-save: each completed `run()` (and `dispose()`) persists the session to `~/.daedalus/sessions/<id>.json` (override dir with `DAEDALUS_SESSIONS_DIR`). One session = one file: the id is generated on first save and reused across runs/disposes.
+- Resume: `daedalus --resume` (latest) / `daedalus --resume <id>` (specific). The persisted system prompt is reused verbatim so the cache prefix stays stable, and the resumed session keeps writing to its original file.
+- Budget: history is trimmed at whole-turn boundaries when the estimate exceeds `maxContextTokens` (default 100,000, env `DAEDALUS_MAX_CONTEXT_TOKENS`, config `maxContextTokens`); a trim cuts to half the budget ("big-step") so it stays rare; skill bodies are never trimmed; a `— context trimmed: N messages kept —` line is shown.
 - Deferred: REPL `/sessions` & `/resume` commands, model-driven summarization, exact token counting.
 
 - [ ] **Step 7: Run the full suite + a smoke test**

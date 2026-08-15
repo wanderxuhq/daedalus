@@ -66,7 +66,7 @@ Daedalus 目前在一次进程内持有会话状态（`Session` 的消息历史 
     remove(id: string): Promise<void>;
   }
   ```
-- **原子写**：先写 `<id>.json.tmp` 再 `rename`，避免中途崩溃产生损坏文件；`load` 遇损坏 JSON 抛 `AiError`-风格错误（或空对象 + 明确失败），不静默吞掉。
+- **原子写**：先写 `<id>.json.tmp` 再 `rename`，避免中途崩溃产生损坏文件；`load` 遇损坏 JSON 抛 `AiError`-风格错误（或空对象 + 明确失败），不静默吞掉。`save` 读既有文件仅用于保留 `createdAt`：文件不存在（ENOENT）视为新会话（`createdAt = now`）；文件存在但 JSON 损坏则抛 "Corrupt session file" 错误，不静默覆盖（与 load 的姿势一致）。
 - **`SessionState`**：`{ messages: Message[]; loadedSkills: string[] }`（定义见 §3.2）。`cwd` 只作文件元数据记录，恢复时不改当前工作目录（CLI 从哪启动就留在哪）。
 
 ### 3.2 `Session` 改造
@@ -91,6 +91,7 @@ class Session {
 interface EngineOptions {
   // …现有字段…
   initialState?: SessionState;     // 传入则从该状态播种会话（跳过新建 system 消息）
+  sessionId?: string;              // 已有会话 id（resume 时复用，后续保存写同一文件）；缺省时首次 save() 生成
   sessionStore?: SessionStore;     // 传入则每次 run() 完成后自动保存
   maxContextTokens?: number;       // 历史预算，默认 100_000（估算 token，见 §4.2）
 }
@@ -105,6 +106,8 @@ class DaedalusEngine {
 
 - **`initialState` 播种**：`new Session()` → 若 `initialState` 存在：`replaceMessages(state.messages)` + `restoreLoadedSkills(state.loadedSkills)`；否则按现状注入 `buildSystemPrompt()`。防御：若恢复出的 messages 里没有 system 消息（旧格式/损坏），则补一条全新的 system 消息。
 - **自动保存**：`run()` 结束后（仅正常完成）保存。崩溃最多丢失一轮进行中的 turn，已完成 turn 不丢。恢复后 skill 正文以内容标记存在 messages 里，`loadedSkills` 集合随状态恢复，二者一致（§4.3）。
+- **稳定会话 id**：引擎持有 `sessionId`，每次保存复用（`save(state, { id: this.sessionId, cwd })`），首次保存用返回值回填。一个会话对应一个 `<id>.json` 文件，跨 run/dispose/resume 不碎片化（§3.1"复用 id"）。
+- **失败 turn 回滚**：`runAgent` 在追加 prompt 前记录历史长度；本轮抛错（client error / 流无终结事件）时把历史截回该长度再抛出，避免失败 turn 的孤立 prompt/工具消息在下次成功 `run()` 时被持久化（恢复后模型看到从未完成的 turn）。
 
 ### 3.4 CLI
 
@@ -162,7 +165,7 @@ export function trimHistory(messages: Message[], opts: TrimOptions): Message[];
 
 1. 从最前找到第一个非 system 消息索引 `start`；`prefix = messages.slice(0, start)`。
 2. `conversation = messages.slice(start)`；遍历其**用户 prompt 边界**（定义见 §4.1），得到每个 turn 的起始下标 `b[0] < b[1] < …`。
-3. 从 `i = 0` 起：若 `estimateTokens([...prefix, ...conversation.slice(b[i])]) <= opts.maxTokens` 或剩余不足 `MIN_KEEP_TURNS`（常量 2），则停；否则 `i++`。
+3. 从 `i = 0` 起：若 `estimateTokens([...prefix, ...conversation.slice(b[i])]) <= opts.maxTokens / 2` 或剩余不足 `MIN_KEEP_TURNS`（常量 2），则停；否则 `i++`。`maxTokens / 2` 即 §4.1 的"大步进"目标（裁到预算的 50%），保证裁剪后留足追加空间、不会下一轮又触发。
 4. 返回 `[...prefix, ...conversation.slice(b[i])]`（即丢掉了前 `i` 个完整 turn）。
 5. **保护谓词**：默认 `isProtected` 判定"该 user 消息含以 `[Skill: ` 开头的块（text 或 tool_result）"→ skill 正文消息。任何被判定保护的消息不丢——若它落在将被丢弃的 turn 里，则把裁剪点退回到该 turn 之前（该 turn 整体保留）。
 
