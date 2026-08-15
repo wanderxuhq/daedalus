@@ -9,26 +9,11 @@ import type { SessionState } from '../core/session.ts';
 import { runRepl } from './repl.ts';
 import { runSetupWizard } from './setup.ts';
 import { ANSI, renderEvent } from './render.ts';
-
-function parseFlags(argv: string[]) {
-  const flags: Record<string, string> = {};
-  for (let i = 0; i < argv.length; i++) {
-    const a = argv[i];
-    if (a === '--provider') flags.provider = argv[++i];
-    else if (a === '--model') flags.model = argv[++i];
-    else if (a === '--base-url') flags.baseUrl = argv[++i];
-    else if (a === '--resume') {
-      const next = argv[i + 1];
-      flags.resume = next && !next.startsWith('-') ? argv[++i] : '1';
-    }
-    else if (a === '--help') flags.help = '1';
-  }
-  return flags;
-}
+import { parseFlags } from './flags.ts';
 
 const flags = parseFlags(process.argv.slice(2));
 if (flags.help) {
-  console.log('daedalus — a terminal agent\n\nUsage: daedalus [--provider openai|anthropic] [--model M] [--base-url URL] [--resume [id]]\n\nConfig: ~/.daedalus/config.json and DAEDALUS_* env vars. First run starts an interactive setup.');
+  console.log('daedalus — a terminal agent\n\nUsage: daedalus [--provider openai|anthropic] [--model M] [--base-url URL] [--resume [id]] [--yes]\n\n--yes auto-approves tool permissions (bash/write run without y/n prompts).\n\nConfig: ~/.daedalus/config.json and DAEDALUS_* env vars. First run starts an interactive setup.');
   process.exit(0);
 }
 
@@ -78,5 +63,6 @@ const engine = new DaedalusEngine({
   maxContextTokens: base.maxContextTokens,
 });
 engine.subscribe(renderEvent);
-await runRepl(engine);
+const autoApprove = flags.yes === '1' || base.autoApprove === true;
+await runRepl(engine, { autoApprove });
 await engine.dispose();
