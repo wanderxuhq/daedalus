@@ -9,7 +9,7 @@ Key properties:
 - **Zero runtime dependencies.** Everything is Node built-ins (`fetch`, `node:fs`, `node:child_process`) plus a hand-written SSE parser. No AI SDKs, no `node-gyp`.
 - **Prompt-cache friendly.** The agent loop keeps the request prefix stable (`system → tools → history → new turn`) and the Anthropic adapter marks stable segments with `cache_control`.
 - **Streaming.** Token and tool-call output is streamed from the provider and rendered as it completes (deltas arrive in a burst at the end of each response turn).
-- **Minimal permission baseline.** Shell commands ask for `y/n` confirmation before running — unless you opt into auto-approve mode (`--yes`).
+- **Minimal permission baseline.** Shell commands ask for `y/n` confirmation before running — unless you opt into auto-approve mode (`--auto`).
 
 ## Install
 
@@ -78,7 +78,7 @@ Daedalus-specific variables:
 | `DAEDALUS_MODEL` | Model name (overrides config file) |
 | `DAEDALUS_BASE_URL` | Provider base URL (overrides config file) |
 | `DAEDALUS_MAX_CONTEXT_TOKENS` | Context budget in tokens (overrides config file; default 100,000) |
-| `DAEDALUS_AUTO_APPROVE` | Auto-approve tool permissions (any value except `0`/`false`/empty; overrides config file, `--yes` overrides this) |
+| `DAEDALUS_AUTO_APPROVE` | Auto-approve tool permissions (any value except `0`/`false`/empty; overrides config file, `--auto` overrides this) |
 | `DAEDALUS_SESSIONS_DIR` | Directory for persisted sessions (default `~/.daedalus/sessions`) |
 
 Standard provider keys are also honored when `DAEDALUS_API_KEY` is not set:
@@ -91,7 +91,7 @@ If no key can be found for the active provider, Daedalus starts an interactive f
 ## Usage
 
 ```bash
-daedalus [--provider openai|anthropic] [--model M] [--base-url URL] [--resume [id]] [--yes] [--help]
+daedalus [--provider openai|anthropic] [--model M] [--base-url URL] [--resume [id]] [--auto] [--help]
 ```
 
 | Flag | Description |
@@ -100,7 +100,7 @@ daedalus [--provider openai|anthropic] [--model M] [--base-url URL] [--resume [i
 | `--model M` | Override the model |
 | `--base-url URL` | Override the provider base URL |
 | `--resume [id]` | Continue a session (no id = the latest); see Sessions & context |
-| `--yes` | Auto-approve tool permissions (no `y/n` prompts); see below |
+| `--auto` | Auto-approve tool permissions (no `y/n` prompts); see below |
 | `--help` | Print usage and exit |
 
 ### Auto-approve mode
@@ -108,10 +108,10 @@ daedalus [--provider openai|anthropic] [--model M] [--base-url URL] [--resume [i
 By default the agent pauses and asks `y/n` before running a shell command or overwriting an existing file. Auto-approve mode answers yes to every permission prompt, so the agent can work unattended:
 
 ```bash
-daedalus --yes
+daedalus --auto
 ```
 
-You can also enable it persistently with the `autoApprove` config-file field or the `DAEDALUS_AUTO_APPROVE` environment variable (any value except `0`, `false`, or empty). Precedence: `--yes` > `DAEDALUS_AUTO_APPROVE` > config file.
+You can also enable it persistently with the `autoApprove` config-file field or the `DAEDALUS_AUTO_APPROVE` environment variable (any value except `0`, `false`, or empty). Precedence: `--auto` > `DAEDALUS_AUTO_APPROVE` > config file.
 
 > **⚠️ Safety.** Auto-approve runs every `bash` command and every file overwrite with no review step between the model's decision and the side effect. Only use it in environments you trust, with a model you trust. In particular, do not enable it where the agent can reach credentials, git remotes, or destructive commands (`rm`, `git push --force`, `DROP TABLE`) that you would not want executed automatically.
 
@@ -136,9 +136,9 @@ Seven built-in tools are registered (see `src/tools/registry.ts`); the engine ad
 
 | Tool | Description |
 |---|---|
-| `bash` | Execute a shell command and return its output. Asks permission first (auto-approved in `--yes` mode); 2-minute timeout. |
+| `bash` | Execute a shell command and return its output. Asks permission first (auto-approved in `--auto` mode); 2-minute timeout. |
 | `read` | Read a file, optionally with a line `offset`/`limit`. Refuses to read files over 1 MB whole (pass `offset`/`limit` instead); partial reads are line-numbered. |
-| `write` | Write content to a file. Asks permission before overwriting an existing file (auto-approved in `--yes` mode); creates parent directories automatically. |
+| `write` | Write content to a file. Asks permission before overwriting an existing file (auto-approved in `--auto` mode); creates parent directories automatically. |
 | `edit` | Replace an exact string in a file. Errors if the string is not found or matches more than once. |
 | `ls` | List directory contents; skips `node_modules` and `.git`. |
 | `grep` | Recursively search file contents for a regex pattern; skips `node_modules` and `.git`. |

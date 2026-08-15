@@ -2,8 +2,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseFlags } from '../../src/cli/flags.ts';
 
-test('--yes sets flags.yes', () => {
-  assert.deepEqual(parseFlags(['--yes']), { yes: '1' });
+test('--auto sets flags.auto', () => {
+  assert.deepEqual(parseFlags(['--auto']), { auto: '1' });
 });
 
 test('--provider, --model, --base-url pass through', () => {
@@ -18,8 +18,8 @@ test('--resume with a value and without a value', () => {
   assert.deepEqual(parseFlags(['--resume']), { resume: '1' });
 });
 
-test('--yes can combine with --resume', () => {
-  const flags = parseFlags(['--resume', '--yes']);
+test('--auto can combine with --resume', () => {
+  const flags = parseFlags(['--resume', '--auto']);
   assert.equal(flags.resume, '1');
-  assert.equal(flags.yes, '1');
+  assert.equal(flags.auto, '1');
 });

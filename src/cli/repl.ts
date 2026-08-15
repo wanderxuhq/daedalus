@@ -43,10 +43,10 @@ export type ReplLineResult = 'exit' | 'handled' | 'unhandled';
 
 /**
  * Resolve whether the REPL should auto-approve tool permission prompts.
- * `--yes` forces auto-approve on; otherwise the config's `autoApprove` decides.
+ * `--auto` forces auto-approve on; otherwise the config's `autoApprove` decides.
  */
-export function resolveAutoApprove(opts: { yes?: boolean; autoApprove?: boolean }): boolean {
-  return opts.yes === true || opts.autoApprove === true;
+export function resolveAutoApprove(opts: { auto?: boolean; autoApprove?: boolean }): boolean {
+  return opts.auto === true || opts.autoApprove === true;
 }
 
 const RESERVED = new Set(['exit', 'quit', 'help', 'skills', 'run', 'sessions', 'resume']);

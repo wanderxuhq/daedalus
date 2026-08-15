@@ -149,9 +149,9 @@ test('isNewlineKey: other keys and undefined are not newlines', () => {
   assert.equal(isNewlineKey({ name: 'return', sequence: '\r', shift: true }), false);
 });
 
-test('resolveAutoApprove: --yes forces auto-approve on', () => {
-  assert.equal(resolveAutoApprove({ yes: true, autoApprove: false }), true);
-  assert.equal(resolveAutoApprove({ yes: true }), true);
+test('resolveAutoApprove: --auto forces auto-approve on', () => {
+  assert.equal(resolveAutoApprove({ auto: true, autoApprove: false }), true);
+  assert.equal(resolveAutoApprove({ auto: true }), true);
 });
 
 test('resolveAutoApprove: config autoApprove drives the default', () => {

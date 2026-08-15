@@ -1,6 +1,6 @@
 /**
  * Parse CLI flags into a string map. Value flags consume the next argument;
- * boolean flags (--resume without a value, --help, --yes) are set to '1'.
+ * boolean flags (--resume without a value, --help, --auto) are set to '1'.
  */
 export function parseFlags(argv: string[]): Record<string, string> {
   const flags: Record<string, string> = {};
@@ -14,7 +14,7 @@ export function parseFlags(argv: string[]): Record<string, string> {
       flags.resume = next && !next.startsWith('-') ? argv[++i] : '1';
     }
     else if (a === '--help') flags.help = '1';
-    else if (a === '--yes') flags.yes = '1';
+    else if (a === '--auto') flags.auto = '1';
   }
   return flags;
 }

@@ -13,7 +13,7 @@ import { parseFlags } from './flags.ts';
 
 const flags = parseFlags(process.argv.slice(2));
 if (flags.help) {
-  console.log('daedalus — a terminal agent\n\nUsage: daedalus [--provider openai|anthropic] [--model M] [--base-url URL] [--resume [id]] [--yes]\n\n--yes auto-approves tool permissions (bash/write run without y/n prompts).\n\nConfig: ~/.daedalus/config.json and DAEDALUS_* env vars. First run starts an interactive setup.');
+  console.log('daedalus — a terminal agent\n\nUsage: daedalus [--provider openai|anthropic] [--model M] [--base-url URL] [--resume [id]] [--auto]\n\n--auto auto-approves tool permissions (bash/write run without y/n prompts).\n\nConfig: ~/.daedalus/config.json and DAEDALUS_* env vars. First run starts an interactive setup.');
   process.exit(0);
 }
 
@@ -63,6 +63,6 @@ const engine = new DaedalusEngine({
   maxContextTokens: base.maxContextTokens,
 });
 engine.subscribe(renderEvent);
-const autoApprove = flags.yes === '1' || base.autoApprove === true;
+const autoApprove = flags.auto === '1' || base.autoApprove === true;
 await runRepl(engine, { autoApprove });
 await engine.dispose();
