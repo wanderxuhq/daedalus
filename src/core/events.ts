@@ -9,6 +9,7 @@ export type CoreEvent =
   | { type: 'tool_call_start'; id: string; name: string }
   | { type: 'tool_call_delta'; id: string; inputDelta: string }
   | { type: 'skill_load'; name: string }
+  | { type: 'context_trim'; dropped: number; kept: number }
   | { type: 'done'; message: Message }
   | { type: 'error'; error: AiError };
 

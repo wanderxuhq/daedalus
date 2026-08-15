@@ -27,7 +27,7 @@ test('message prefix stays stable across plain runs (no skill loads)', async () 
   // Each request is a strict superset of the previous (append-only history).
   assert.ok(snapshots[1].length > snapshots[0].length);
   assert.ok(snapshots[2].length > snapshots[1].length);
-  engine.dispose();
+  await engine.dispose();
 });
 
 test('skill load only appends, never mutates earlier messages', async () => {
@@ -59,6 +59,6 @@ test('skill load only appends, never mutates earlier messages', async () => {
   // earlier messages (system-assembly + user prompt) are byte-identical between calls.
   assert.ok(before[0].startsWith('[') && before[0].endsWith(']'));
   assert.ok(before[1].includes('Body text'));
-  engine.dispose();
+  await engine.dispose();
   rmSync(base, { recursive: true, force: true });
 });

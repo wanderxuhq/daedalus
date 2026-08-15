@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { DaedalusEngine } from '../../src/core/engine.ts';
 import type { AiClient } from '../../src/ai/types.ts';
 import { buildSystemPrompt } from '../../src/core/system-prompt.ts';
+import { SessionStore } from '../../src/core/session-store.ts';
+import type { SessionState } from '../../src/core/session.ts';
 
 function textClient(text: string): AiClient {
   return {
@@ -16,13 +18,23 @@ function textClient(text: string): AiClient {
   };
 }
 
-function opts(overrides: Partial<{ client: AiClient; skillDirs: string[]; maxIterations: number }> = {}) {
+function opts(overrides: Partial<{
+  client: AiClient;
+  skillDirs: string[];
+  maxIterations: number;
+  initialState: SessionState;
+  sessionStore: SessionStore;
+  maxContextTokens: number;
+}> = {}) {
   return {
     client: overrides.client ?? textClient('ok'),
     cwd: process.cwd(),
     askPermission: (async () => true) as (action: string, target: string) => Promise<boolean>,
     skillDirs: overrides.skillDirs ?? [],
     maxIterations: overrides.maxIterations ?? 2,
+    ...(overrides.initialState ? { initialState: overrides.initialState } : {}),
+    ...(overrides.sessionStore ? { sessionStore: overrides.sessionStore } : {}),
+    ...(overrides.maxContextTokens !== undefined ? { maxContextTokens: overrides.maxContextTokens } : {}),
   };
 }
 
@@ -30,7 +42,7 @@ test('run drives a single prompt through the client', async () => {
   const engine = new DaedalusEngine(opts());
   const result = await engine.run('hello');
   assert.equal(result, 'ok');
-  engine.dispose();
+  await engine.dispose();
 });
 
 test('session persists across runs (history accumulates)', async () => {
@@ -46,7 +58,7 @@ test('session persists across runs (history accumulates)', async () => {
   await engine.run('first');
   await engine.run('second');
   assert.ok(assistantCount >= 1);
-  engine.dispose();
+  await engine.dispose();
 });
 
 test('skills listing is exposed via getter', async () => {
@@ -55,7 +67,7 @@ test('skills listing is exposed via getter', async () => {
   writeFileSync(join(base, 'review', 'SKILL.md'), '---\nname: review\ndescription: Review\n---\nBody');
   const engine = new DaedalusEngine(opts({ skillDirs: [base] }));
   assert.equal(engine.skills[0].name, 'review');
-  engine.dispose();
+  await engine.dispose();
   rmSync(base, { recursive: true, force: true });
 });
 
@@ -80,8 +92,8 @@ test('loadSkill loads a skill, marks it loaded, and injects body into history', 
   await probe.loadSkill('review');
   await probe.run('now do it');
   assert.equal(sawBody, true);
-  engine.dispose();
-  probe.dispose();
+  await engine.dispose();
+  await probe.dispose();
   rmSync(base, { recursive: true, force: true });
 });
 
@@ -94,7 +106,7 @@ test('subscribe receives skill_load when loadSkill runs', async () => {
   engine.subscribe((ev) => { if (ev.type === 'skill_load') got.push(ev.name); });
   await engine.loadSkill('review');
   assert.deepEqual(got, ['review']);
-  engine.dispose();
+  await engine.dispose();
   rmSync(base, { recursive: true, force: true });
 });
 
@@ -122,14 +134,14 @@ test('run allows the model to load a skill via the Skill tool', async () => {
   const result = await engine.run('review this');
   assert.equal(result, 'reviewed');
   assert.ok(iterations >= 2);
-  engine.dispose();
+  await engine.dispose();
   rmSync(base, { recursive: true, force: true });
 });
 
 test('loadSkill with unknown name throws', async () => {
   const engine = new DaedalusEngine(opts());
   await assert.rejects(() => engine.loadSkill('nope'), /Unknown skill/);
-  engine.dispose();
+  await engine.dispose();
 });
 
 test('constructor injects the system prompt once as the first message', async () => {
@@ -150,5 +162,68 @@ test('constructor injects the system prompt once as the first message', async ()
   assert.equal(systemCount, 1);
   assert.equal(firstRole, 'system');
   assert.equal(gotPrompt, true);
-  engine.dispose();
+  await engine.dispose();
+});
+
+test('initialState restores messages verbatim (incl. system) and skills without events', async () => {
+  const initialState: SessionState = {
+    messages: [
+      { role: 'system', content: [{ type: 'text', text: 'VERBATIM-SYSTEM' }] },
+      { role: 'user', content: [{ type: 'text', text: 'restored q' }] },
+      { role: 'assistant', content: [{ type: 'text', text: 'restored a' }] },
+    ],
+    loadedSkills: ['review'],
+  };
+  let sawSystem = '';
+  const skillEvents: string[] = [];
+  const engine = new DaedalusEngine(opts({
+    initialState,
+    client: {
+      async *streamChat(params) {
+        sawSystem = params.messages[0].content[0].type === 'text' ? params.messages[0].content[0].text : '';
+        yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] } };
+      },
+    },
+  }));
+  engine.subscribe((ev) => { if (ev.type === 'skill_load') skillEvents.push(ev.name); });
+  const result = await engine.run('go');
+  assert.equal(result, 'ok');
+  assert.equal(sawSystem, 'VERBATIM-SYSTEM');
+  assert.equal(engine.getSessionState().messages.length, 5); // system + q + a + 'go' + assistant 'ok'
+  assert.deepEqual(engine.getSessionState().loadedSkills, ['review']);
+  assert.deepEqual(skillEvents, []); // restore must not emit skill_load
+  await engine.dispose();
+});
+
+test('initialState without a system message gets a defensive one', async () => {
+  let firstRole = '';
+  const engine = new DaedalusEngine(opts({
+    initialState: { messages: [{ role: 'user', content: [{ type: 'text', text: 'only user' }] }], loadedSkills: [] },
+    client: {
+      async *streamChat(params) {
+        firstRole = params.messages[0].role;
+        yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] } };
+      },
+    },
+  }));
+  await engine.run('x');
+  assert.equal(firstRole, 'system');
+  await engine.dispose();
+});
+
+test('sessionStore is saved after run and dispose', async () => {
+  const dir = join(tmpdir(), `dae-eng-store-${Date.now()}`);
+  mkdirSync(dir, { recursive: true });
+  const store = new SessionStore(dir);
+  const engine = new DaedalusEngine({ ...opts(), sessionStore: store });
+  await engine.run('hello store');
+  let list = await store.list();
+  assert.equal(list.length, 1);
+  assert.ok(list[0].messageCount >= 2); // system + prompt
+  await engine.dispose();
+  list = await store.list();
+  assert.equal(list.length, 1);
+  const loaded = await store.load(list[0].id);
+  assert.ok(loaded.messages.some((m) => m.content.some((c) => c.type === 'text' && c.text === 'hello store')));
+  rmSync(dir, { recursive: true, force: true });
 });

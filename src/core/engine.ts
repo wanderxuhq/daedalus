@@ -3,11 +3,15 @@ import type { Tool } from '../tools/types.ts';
 import { tools as builtinTools } from '../tools/registry.ts';
 import type { CoreEvent } from './events.ts';
 import { Session } from './session.ts';
+import type { SessionState } from './session.ts';
 import { SkillRegistry } from './skills/registry.ts';
 import type { SkillInfo } from './skills/types.ts';
 import { createSkillTool } from './skills/skill-tool.ts';
+import type { SessionStore } from './session-store.ts';
 import { runAgent } from '../agent/loop.ts';
 import { buildSystemPrompt } from './system-prompt.ts';
+
+export const DEFAULT_MAX_CONTEXT_TOKENS = 100_000;
 
 export interface EngineOptions {
   client: AiClient;
@@ -16,6 +20,12 @@ export interface EngineOptions {
   askPermission?: (action: string, target: string) => Promise<boolean>;
   skillDirs?: string[];
   maxIterations?: number;
+  /** Seed the session from a persisted state (skips building a new system message). */
+  initialState?: SessionState;
+  /** When set, the engine persists the session after every run() and dispose(). */
+  sessionStore?: SessionStore;
+  /** History budget in estimated tokens. Default {@link DEFAULT_MAX_CONTEXT_TOKENS}. */
+  maxContextTokens?: number;
 }
 
 export class DaedalusEngine {
@@ -26,18 +36,34 @@ export class DaedalusEngine {
   private cwd: string;
   private askPermission: (action: string, target: string) => Promise<boolean>;
   private maxIterations?: number;
+  private sessionStore?: SessionStore;
+  private maxContextTokens: number;
 
   constructor(opts: EngineOptions) {
     this.session = new Session();
     this.session.start();
-    // Stable system-prompt prefix: injected ONCE at construction, before any
-    // runAgent call. runAgent/loadSkill never touch it (spec §4; pre-flight ruling).
-    this.session.addMessage({ role: 'system', content: [{ type: 'text', text: buildSystemPrompt() }] });
     this.registry = new SkillRegistry(opts.skillDirs);
     this.client = opts.client;
     this.cwd = opts.cwd;
     this.askPermission = opts.askPermission ?? (async () => false);
     this.maxIterations = opts.maxIterations;
+    this.sessionStore = opts.sessionStore;
+    this.maxContextTokens = opts.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS;
+    if (opts.initialState) {
+      // Restore verbatim: the persisted system message is reused as-is so the cache
+      // prefix stays byte-identical across a resume (design §3.2). Defensive re-add
+      // only when the restored history lacks a system message (old/corrupt state).
+      this.session.replaceMessages(opts.initialState.messages);
+      this.session.restoreLoadedSkills(opts.initialState.loadedSkills);
+      if (!opts.initialState.messages.some((m) => m.role === 'system')) {
+        this.session.replaceMessages([
+          { role: 'system', content: [{ type: 'text', text: buildSystemPrompt() }] },
+          ...opts.initialState.messages,
+        ]);
+      }
+    } else {
+      this.session.addMessage({ role: 'system', content: [{ type: 'text', text: buildSystemPrompt() }] });
+    }
     this.tools = [...builtinTools, createSkillTool(this.registry, this.session)];
   }
 
@@ -54,6 +80,11 @@ export class DaedalusEngine {
     return this.registry.list();
   }
 
+  /** Snapshot the current session (used by the CLI for manual saves). */
+  getSessionState(): SessionState {
+    return this.session.getState();
+  }
+
   async loadSkill(name: string): Promise<SkillInfo> {
     const skill = this.registry.get(name);
     if (!skill) throw new Error(`Unknown skill: ${name}`);
@@ -68,7 +99,7 @@ export class DaedalusEngine {
   }
 
   async run(prompt: string): Promise<string> {
-    return runAgent({
+    const result = await runAgent({
       client: this.client,
       session: this.session,
       prompt,
@@ -76,10 +107,20 @@ export class DaedalusEngine {
       cwd: this.cwd,
       askPermission: this.askPermission,
       maxIterations: this.maxIterations,
+      maxContextTokens: this.maxContextTokens,
     });
+    await this.persist();
+    return result;
   }
 
-  dispose(): void {
+  async dispose(): Promise<void> {
+    await this.persist();
     this.session.dispose();
+  }
+
+  private async persist(): Promise<void> {
+    if (this.sessionStore) {
+      await this.sessionStore.save(this.getSessionState(), { cwd: this.cwd });
+    }
   }
 }
