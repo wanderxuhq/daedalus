@@ -72,3 +72,17 @@ test('restoreLoadedSkills sets the set without emitting events', () => {
   assert.deepEqual(got, []);
   assert.equal(s.isSkillLoaded('review'), true);
 });
+
+test('getState deep-copies nested tool_call.input', () => {
+  const s = new Session();
+  s.addMessage({ role: 'assistant', content: [{ type: 'tool_call', id: 't', name: 'bash', input: { command: 'ls', flags: { a: true } } }] });
+  const st = s.getState();
+  const input = st.messages[0].content[0];
+  if (input.type !== 'tool_call') throw new Error('expected tool_call block');
+  input.input.command = 'MUTATED';
+  input.input.flags.a = false;
+  const live = s.getMessages()[0].content[0];
+  if (live.type !== 'tool_call') throw new Error('expected tool_call block');
+  assert.equal(live.input.command, 'ls');
+  assert.equal(live.input.flags.a, true);
+});

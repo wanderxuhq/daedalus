@@ -51,12 +51,14 @@ const client = createAiClient(config);
 
 const store = new SessionStore();
 let initialState: SessionState | undefined;
+let sessionId: string | undefined;
 if (flags.resume) {
   const meta = flags.resume === '1' ? await store.latest() : { id: flags.resume };
   if (meta) {
     try {
       const loaded = await store.load(meta.id);
       initialState = { messages: loaded.messages, loadedSkills: loaded.loadedSkills };
+      sessionId = loaded.id; // continue writing to the resumed session's file
       console.log(`${ANSI.dim}resumed session ${loaded.id} (${loaded.messages.length} messages)${ANSI.reset}`);
     } catch (e) {
       console.error(`${ANSI.red}Failed to resume: ${(e as Error).message}${ANSI.reset}`);
@@ -71,6 +73,7 @@ const engine = new DaedalusEngine({
   client,
   cwd: process.cwd(),
   initialState,
+  sessionId,
   sessionStore: store,
   maxContextTokens: base.maxContextTokens,
 });

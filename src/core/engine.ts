@@ -22,6 +22,8 @@ export interface EngineOptions {
   maxIterations?: number;
   /** Seed the session from a persisted state (skips building a new system message). */
   initialState?: SessionState;
+  /** Existing session id to keep writing to (resume). Default: first save() generates one. */
+  sessionId?: string;
   /** When set, the engine persists the session after every run() and dispose(). */
   sessionStore?: SessionStore;
   /** History budget in estimated tokens. Default {@link DEFAULT_MAX_CONTEXT_TOKENS}. */
@@ -38,6 +40,7 @@ export class DaedalusEngine {
   private maxIterations?: number;
   private sessionStore?: SessionStore;
   private maxContextTokens: number;
+  private sessionId: string | undefined;
 
   constructor(opts: EngineOptions) {
     this.session = new Session();
@@ -49,6 +52,7 @@ export class DaedalusEngine {
     this.maxIterations = opts.maxIterations;
     this.sessionStore = opts.sessionStore;
     this.maxContextTokens = opts.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS;
+    this.sessionId = opts.sessionId;
     if (opts.initialState) {
       // Restore verbatim: the persisted system message is reused as-is so the cache
       // prefix stays byte-identical across a resume (design §3.2). Defensive re-add
@@ -80,7 +84,7 @@ export class DaedalusEngine {
     return this.registry.list();
   }
 
-  /** Snapshot the current session (used by the CLI for manual saves). */
+  /** Snapshot the current session (persistence + external consumers). */
   getSessionState(): SessionState {
     return this.session.getState();
   }
@@ -120,7 +124,9 @@ export class DaedalusEngine {
 
   private async persist(): Promise<void> {
     if (this.sessionStore) {
-      await this.sessionStore.save(this.getSessionState(), { cwd: this.cwd });
+      // Reuse the stable session id (resumed or first-generated) so a session is one
+      // file, not one snapshot per save (design §3.3). save() returns the id used.
+      this.sessionId = await this.sessionStore.save(this.getSessionState(), { id: this.sessionId, cwd: this.cwd });
     }
   }
 }

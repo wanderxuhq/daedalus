@@ -154,7 +154,7 @@ The model can load a skill through the `Skill` tool: it picks a name from the to
 
 ## Sessions & context
 
-Every conversation is a **session**. Daedalus auto-saves the current session after each completed turn (`run()`) and when it shuts down (`dispose()`), writing it to `~/.daedalus/sessions/<id>.json` (override the directory with `DAEDALUS_SESSIONS_DIR`).
+Every conversation is a **session**. Daedalus auto-saves the current session after each completed turn (`run()`) and when it shuts down (`dispose()`), writing it to `~/.daedalus/sessions/<id>.json` (override the directory with `DAEDALUS_SESSIONS_DIR`). One session maps to one file: the id is generated on the first save and reused across runs, and `--resume` keeps writing to the same file.
 
 To pick up where you left off, start Daedalus with `--resume` to continue the most recent session, or `--resume <id>` for a specific one:
 
@@ -167,7 +167,7 @@ The persisted system prompt is reused verbatim on resume, so the prompt-cache pr
 
 ### Context budget
 
-History is trimmed at whole-turn boundaries when the estimated token count exceeds the context budget (`maxContextTokens`, default 100,000). The budget comes from the `DAEDALUS_MAX_CONTEXT_TOKENS` environment variable, the `maxContextTokens` config-file field, or the built-in default. Skill bodies are never trimmed while the skill stays loaded. When a trim happens, Daedalus prints a `— context trimmed: N messages kept —` line.
+History is trimmed at whole-turn boundaries when the estimated token count exceeds the context budget (`maxContextTokens`, default 100,000). The budget comes from the `DAEDALUS_MAX_CONTEXT_TOKENS` environment variable, the `maxContextTokens` config-file field, or the built-in default. A trim cuts to roughly half the budget so trims stay rare and cache misses infrequent. Skill bodies are never trimmed while the skill stays loaded. When a trim happens, Daedalus prints a `— context trimmed: N messages kept —` line.
 
 Deferred (see the design spec): REPL `/sessions` and `/resume` commands, model-driven summarization, and exact token counting.
 

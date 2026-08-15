@@ -101,3 +101,9 @@ test('load throws when the file has no messages or loadedSkills arrays', async (
   writeFileSync(join(dir, 'shape.json'), JSON.stringify({ id: 'shape' }));
   await assert.rejects(() => store.load('shape'), /Corrupt/);
 });
+
+test('save rejects when the existing file is corrupt instead of silently overwriting', async () => {
+  const { store, dir } = tmpStore();
+  writeFileSync(join(dir, 'corrupt.json'), '{nope');
+  await assert.rejects(() => store.save(state, { id: 'corrupt' }), /Corrupt/);
+});

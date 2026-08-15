@@ -192,3 +192,17 @@ test('trims old turns when over budget and emits context_trim', async () => {
   assert.ok(last.includes('p3'));       // newest prompt kept
   assert.ok(got.length >= 1);           // at least one context_trim emitted
 });
+
+test('a failed run rolls back the turn (no orphaned prompt left in history)', async () => {
+  const session = makeSession();
+  session.addMessage({ role: 'system', content: [{ type: 'text', text: 'sys' }] });
+  const client: AiClient = {
+    async *streamChat() {
+      yield { type: 'error', error: new AiError('api', 'boom') };
+    },
+  };
+  await assert.rejects(() => runAgent({ client, session, prompt: 'hi', tools: [], ...CTX }), /boom/);
+  const msgs = session.getMessages();
+  assert.equal(msgs.length, 1); // system only — the prompt was rolled back
+  assert.equal(msgs[0].role, 'system');
+});

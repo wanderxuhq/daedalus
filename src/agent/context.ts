@@ -52,8 +52,9 @@ function isSkillBody(m: Message): boolean {
 }
 
 /**
- * Drop oldest whole turns until the history fits `maxTokens` (or `MIN_KEEP_TURNS`
- * turns remain), keeping the system prefix and never dropping a protected message
+ * Drop oldest whole turns until the history fits `maxTokens / 2` (the design's
+ * "big-step to 50% of budget" target; or `MIN_KEEP_TURNS` turns remain), keeping the
+ * system prefix and never dropping a protected message
  * (pulling the cut back to keep its whole turn). Returns the input array unchanged
  * when nothing is trimmed, so callers can detect a trim via `!==`.
  */
@@ -75,11 +76,13 @@ export function trimHistory(messages: Message[], opts: TrimOptions): Message[] {
   }
   if (bounds.length === 0) return messages;
 
-  // How many leading turns to drop (grows until within budget / at the floor).
+  // How many leading turns to drop (grows until within half the budget / at the floor).
+  // Big-step (design §4.1): trim to maxTokens/2 so a trim buys headroom and does not
+  // re-trigger the next turn, keeping cache misses rare.
   let cut = 0;
   while (
     cut < bounds.length - MIN_KEEP_TURNS &&
-    estimate([...prefix, ...conversation.slice(bounds[cut])]) > opts.maxTokens
+    estimate([...prefix, ...conversation.slice(bounds[cut])]) > opts.maxTokens / 2
   ) {
     cut++;
   }

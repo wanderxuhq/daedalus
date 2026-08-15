@@ -21,12 +21,22 @@ test('estimateTokens counts per-message, per-block, and per-char overhead', () =
   assert.equal(estimateTokens([{ role: 'user', content: [{ type: 'tool_result', toolCallId: 't', content: '0123456789abcdef' }] }]), 10); // 4 + ceil(16/4) + 2
 });
 
-test('keeps the system prefix and drops oldest whole turns', () => {
+test('keeps the system prefix and drops oldest whole turns (big-step to half budget)', () => {
   const msgs: Message[] = [sys(), user('one'), asst('a1'), user('two'), asst('a2'), user('three'), asst('a3'), user('four'), asst('a4')];
   const out = trimHistory(msgs, { maxTokens: 7, estimate: count });
+  // Budget 7 → big-step target 3.5 → keeps 2 whole turns (MIN_KEEP_TURNS floor).
   assert.equal(out[0].role, 'system');
-  assert.ok(out.some((m) => m.content.some((c) => c.type === 'text' && c.text === 'two')));
+  assert.ok(out.some((m) => m.content.some((c) => c.type === 'text' && c.text === 'three')));
   assert.ok(!out.some((m) => m.content.some((c) => c.type === 'text' && c.text === 'one')));
+  assert.ok(!out.some((m) => m.content.some((c) => c.type === 'text' && c.text === 'two')));
+});
+
+test('big-step trims to at most half the budget (rare-trigger headroom)', () => {
+  const msgs: Message[] = [sys(), user('one'), asst('a1'), user('two'), asst('a2'), user('three'), asst('a3'), user('four'), asst('a4'), user('five'), asst('a5'), user('six'), asst('a6')];
+  const out = trimHistory(msgs, { maxTokens: 12, estimate: count });
+  // target = 12/2 = 6; 6 turns → MIN_KEEP_TURNS floor keeps sys + last 2 turns (5 msgs) ≤ 6.
+  assert.ok(count(out) <= 12 / 2, `trimmed ${count(out)} messages, budget 12 → target 6`);
+  assert.equal(out[0].role, 'system');
 });
 
 test('never splits a tool_call from its tool_result', () => {

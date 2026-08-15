@@ -10,3 +10,5 @@ export type { EngineOptions } from './engine.ts';
 export { SessionStore } from './session-store.ts';
 export type { SessionMeta, StoredSession } from './session-store.ts';
 export type { SessionState } from './session.ts';
+export { estimateTokens, trimHistory, MIN_KEEP_TURNS } from '../agent/context.ts';
+export type { TrimOptions } from '../agent/context.ts';

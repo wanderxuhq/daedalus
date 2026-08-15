@@ -47,7 +47,7 @@ export class Session {
     return {
       messages: this.msgs.map((m) => ({
         role: m.role,
-        content: m.content.map((b) => ({ ...b })),
+        content: m.content.map((b) => structuredClone(b)),
       })),
       loadedSkills: [...this.skills],
     };

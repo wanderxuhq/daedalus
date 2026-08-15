@@ -43,10 +43,20 @@ export class SessionStore {
     await mkdir(this.dir, { recursive: true });
     const id = meta.id ?? makeId();
     let existing: StoredSession | null = null;
+    let raw: string;
     try {
-      existing = JSON.parse(await readFile(this.file(id), 'utf8')) as StoredSession;
-    } catch {
-      // New session (or unreadable previous file — overwrite with a fresh record).
+      raw = await readFile(this.file(id), 'utf8');
+    } catch (e) {
+      const code = (e as { code?: string } | null)?.code;
+      if (code !== 'ENOENT') throw e; // real IO failure, not a missing file
+      raw = ''; // file does not exist yet — brand-new session (createdAt = now)
+    }
+    if (raw) {
+      try {
+        existing = JSON.parse(raw) as StoredSession;
+      } catch {
+        throw new Error(`Corrupt session file: ${this.file(id)}`);
+      }
     }
     const now = new Date().toISOString();
     const payload: StoredSession = {

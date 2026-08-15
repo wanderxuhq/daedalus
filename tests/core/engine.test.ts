@@ -23,6 +23,7 @@ function opts(overrides: Partial<{
   skillDirs: string[];
   maxIterations: number;
   initialState: SessionState;
+  sessionId: string;
   sessionStore: SessionStore;
   maxContextTokens: number;
 }> = {}) {
@@ -225,5 +226,40 @@ test('sessionStore is saved after run and dispose', async () => {
   assert.equal(list.length, 1);
   const loaded = await store.load(list[0].id);
   assert.ok(loaded.messages.some((m) => m.content.some((c) => c.type === 'text' && c.text === 'hello store')));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('auto-save keeps a single file across runs and dispose (stable session id)', async () => {
+  const dir = join(tmpdir(), `dae-eng-id-${Date.now()}`);
+  mkdirSync(dir, { recursive: true });
+  const store = new SessionStore(dir);
+  const engine = new DaedalusEngine({ ...opts(), sessionStore: store });
+  await engine.run('first');
+  await new Promise((r) => setTimeout(r, 1100)); // cross the id slug's second boundary
+  await engine.run('second');
+  await engine.dispose();
+  const list = await store.list();
+  assert.equal(list.length, 1); // one session = one file, regardless of timing
+  const loaded = await store.load(list[0].id);
+  assert.equal(loaded.messages.filter((m) => m.role === 'user' && m.content.some((c) => c.type === 'text')).length, 2);
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('resume (initialState + sessionId) continues writing to the same file', async () => {
+  const dir = join(tmpdir(), `dae-eng-res-${Date.now()}`);
+  mkdirSync(dir, { recursive: true });
+  const store = new SessionStore(dir);
+  const e1 = new DaedalusEngine({ ...opts(), sessionStore: store });
+  await e1.run('first turn');
+  await e1.dispose();
+  const meta = await store.latest()!;
+  const loaded = await store.load(meta.id);
+  const e2 = new DaedalusEngine({ ...opts(), sessionStore: store, initialState: { messages: loaded.messages, loadedSkills: loaded.loadedSkills }, sessionId: loaded.id });
+  await e2.run('second turn');
+  await e2.dispose();
+  const list = await store.list();
+  assert.equal(list.length, 1); // resumed engine updates the ORIGINAL file, no new file
+  const after = await store.load(meta.id);
+  assert.ok(after.messages.some((m) => m.content.some((c) => c.type === 'text' && c.text === 'second turn')));
   rmSync(dir, { recursive: true, force: true });
 });
