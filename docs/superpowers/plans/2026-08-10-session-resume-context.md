@@ -130,8 +130,13 @@ test('a protected skill-body message pulls the cut back to keep its turn', () =>
     user('three'), asst('a3'),
   ];
   const out = trimHistory(msgs, { maxTokens: 5, estimate: count });
-  assert.equal(out, msgs); // no trim at all — the cut was pulled back before the skill turn
-  assert.ok(out.some((m) => m.content.some((c) => c.type === 'text' && c.text === 'one')));
+  // The unprotected turn 'one' is dropped; the protected skill turn is kept whole
+  // (the cut pulled back from 2 to 1), and everything after it stays.
+  assert.notEqual(out, msgs);
+  assert.ok(!out.some((m) => m.content.some((c) => c.type === 'text' && c.text === 'one')));
+  assert.ok(out.some((m) => m.content.some((c) => c.type === 'text' && c.text.startsWith('[Skill: review]'))));
+  assert.ok(out.some((m) => m.content.some((c) => c.type === 'text' && c.text === 'two')));
+  assert.ok(out.some((m) => m.content.some((c) => c.type === 'text' && c.text === 'three')));
 });
 
 test('MIN_KEEP_TURNS floor keeps at least two turns', () => {
@@ -175,14 +180,25 @@ test('no user prompts and empty history return the input unchanged', () => {
 });
 
 test('default isProtected recognizes [Skill: markers in text and tool_result blocks', () => {
-  const textSkill: Message = { role: 'user', content: [{ type: 'text', text: '[Skill: fix]\n\nDo fixes' }] };
+  // A tool_result-marker skill sits inside turn 0. The budget would drop that turn,
+  // so the tool_result must pull the cut back to 0 — no trim at all.
   const resultSkill: Message = { role: 'user', content: [{ type: 'tool_result', toolCallId: 't', content: '[Skill: fix]\n\nDo fixes' }] };
-  const plain: Message = { role: 'user', content: [{ type: 'text', text: 'plain' }] };
-  const msgs: Message[] = [sys(), textSkill, asst('a1'), resultSkill, asst('a2'), plain, asst('a3')];
-  const out = trimHistory(msgs, { maxTokens: 3, estimate: count });
-  // The protected turns are kept even though the budget is tiny.
-  assert.ok(out.some((m) => m === textSkill));
+  const msgs: Message[] = [
+    sys(), user('p1'), asst('a1'), resultSkill, asst('a2'),
+    user('p2'), asst('a3'), user('p3'), asst('a4'),
+  ];
+  const out = trimHistory(msgs, { maxTokens: 4, estimate: count });
+  assert.equal(out, msgs); // pull-back to 0: whole history kept
   assert.ok(out.some((m) => m === resultSkill));
+  // A text-marker skill in a later turn survives trimming while an unprotected
+  // earlier turn is dropped (recognition is what keeps the skill).
+  const textSkill: Message = { role: 'user', content: [{ type: 'text', text: '[Skill: fix]\n\nDo fixes' }] };
+  const msgs2: Message[] = [sys(), user('q1'), asst('b1'), textSkill, asst('b2'), user('q2'), asst('b3')];
+  const out2 = trimHistory(msgs2, { maxTokens: 4, estimate: count });
+  assert.notEqual(out2, msgs2);
+  assert.ok(!out2.some((m) => m.content.some((c) => c.type === 'text' && c.text === 'q1')));
+  assert.ok(out2.some((m) => m === textSkill));
+  assert.ok(out2.some((m) => m.content.some((c) => c.type === 'text' && c.text === 'q2')));
 });
 ```
 
@@ -567,7 +583,6 @@ Expected: FAIL — "Cannot find module '/root/projects/daedalus/src/core/session
 import { mkdir, readdir, readFile, writeFile, rename, rm } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import type { Message } from '../ai/types.ts';
 import type { SessionState } from './session.ts';
 
 export interface SessionMeta {
@@ -689,7 +704,7 @@ export class SessionStore {
 }
 ```
 
-> Note: `import type { Message }` is present for type-level reference but unused by the implementation; if the linter complains, drop it. (It documents the `messages` payload type. Keep `SessionState` import — it is used.)
+> Note: `SessionState` is the only type import — `Message` is intentionally NOT imported (unused).
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -852,7 +867,7 @@ test('initialState restores messages verbatim (incl. system) and skills without 
   const result = await engine.run('go');
   assert.equal(result, 'ok');
   assert.equal(sawSystem, 'VERBATIM-SYSTEM');
-  assert.equal(engine.getSessionState().messages.length, 4); // system + q + a + 'go'
+  assert.equal(engine.getSessionState().messages.length, 5); // system + q + a + 'go' + assistant 'ok'
   assert.deepEqual(engine.getSessionState().loadedSkills, ['review']);
   assert.deepEqual(skillEvents, []); // restore must not emit skill_load
   await engine.dispose();
@@ -894,11 +909,13 @@ test('sessionStore is saved after run and dispose', async () => {
 
 - [ ] **Step 3: Update the existing `dispose()` calls to await**
 
-`dispose()` becomes async. Update every call site in the test suite mechanically:
+`dispose()` becomes async. Update every call site in the test suite mechanically. The regex is anchored to the start of the line (optional leading whitespace) so lines already written as `await engine.dispose();` are left untouched (no double `await`):
 
 ```bash
-grep -rl '\.dispose()' tests/ | xargs sed -i 's/engine\.dispose();/await engine.dispose();/g; s/probe\.dispose();/await probe.dispose();/g'
+grep -rl '\.dispose();' tests/ | xargs sed -i -E 's/^([[:space:]]*)engine\.dispose\(\);/\1await engine.dispose();/; s/^([[:space:]]*)probe\.dispose\(\);/\1await probe.dispose();/'
 ```
+
+Note: `Session.dispose()` stays synchronous — only `DaedalusEngine.dispose()` becomes async, so `s.dispose();` calls in `tests/core/session.test.ts` must remain unchanged (and this regex does not touch them).
 
 Run: `node --test tests/core/engine.test.ts tests/core/cache-stability.test.ts`
 Expected: still PASS — the `await` is on a no-op persist (no `sessionStore` passed), so behavior is identical.
