@@ -92,3 +92,19 @@ test('config file with null provider field falls back to defaults', () => {
   assert.equal(cfg.provider, 'anthropic');
   assert.equal(cfg.apiKey, 'sk-ant-1');
 });
+
+test('DAEDALUS_MAX_CONTEXT_TOKENS parses into maxContextTokens', () => {
+  const cfg = loadConfig({ ANTHROPIC_API_KEY: 'sk-ant-1', DAEDALUS_CONFIG_PATH: NO_CONFIG_PATH, DAEDALUS_MAX_CONTEXT_TOKENS: '50000' } as NodeJS.ProcessEnv);
+  assert.equal(cfg.maxContextTokens, 50000);
+});
+
+test('invalid DAEDALUS_MAX_CONTEXT_TOKENS is dropped', () => {
+  const cfg = loadConfig({ ANTHROPIC_API_KEY: 'sk-ant-1', DAEDALUS_CONFIG_PATH: NO_CONFIG_PATH, DAEDALUS_MAX_CONTEXT_TOKENS: 'abc' } as NodeJS.ProcessEnv);
+  assert.equal(cfg.maxContextTokens, undefined);
+});
+
+test('maxContextTokens from the config file is exposed', () => {
+  const configPath = tempConfigFile(JSON.stringify({ provider: 'openai', apiKey: 'sk-file', maxContextTokens: 200000 }));
+  const cfg = loadConfig({ DAEDALUS_CONFIG_PATH: configPath } as NodeJS.ProcessEnv);
+  assert.equal(cfg.maxContextTokens, 200000);
+});

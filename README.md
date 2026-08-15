@@ -48,7 +48,8 @@ Create `~/.daedalus/config.json`:
   "provider": "anthropic",
   "apiKey": "sk-ant-...",
   "model": "claude-sonnet-4-5",
-  "baseURL": "https://api.anthropic.com"
+  "baseURL": "https://api.anthropic.com",
+  "maxContextTokens": 100000
 }
 ```
 
@@ -75,6 +76,8 @@ Daedalus-specific variables:
 | `DAEDALUS_API_KEY` | API key for any provider (highest priority) |
 | `DAEDALUS_MODEL` | Model name (overrides config file) |
 | `DAEDALUS_BASE_URL` | Provider base URL (overrides config file) |
+| `DAEDALUS_MAX_CONTEXT_TOKENS` | Context budget in tokens (overrides config file; default 100,000) |
+| `DAEDALUS_SESSIONS_DIR` | Directory for persisted sessions (default `~/.daedalus/sessions`) |
 
 Standard provider keys are also honored when `DAEDALUS_API_KEY` is not set:
 
@@ -86,7 +89,7 @@ If no key can be found for the active provider, Daedalus starts an interactive f
 ## Usage
 
 ```bash
-daedalus [--provider openai|anthropic] [--model M] [--base-url URL] [--help]
+daedalus [--provider openai|anthropic] [--model M] [--base-url URL] [--resume [id]] [--help]
 ```
 
 | Flag | Description |
@@ -94,6 +97,7 @@ daedalus [--provider openai|anthropic] [--model M] [--base-url URL] [--help]
 | `--provider openai\|anthropic` | Override the active provider |
 | `--model M` | Override the model |
 | `--base-url URL` | Override the provider base URL |
+| `--resume [id]` | Continue a session (no id = the latest); see Sessions & context |
 | `--help` | Print usage and exit |
 
 ### REPL commands
@@ -148,9 +152,28 @@ The model can load a skill through the `Skill` tool: it picks a name from the to
 
 `allowed-tools` and `disallowed-tools` are parsed but not yet enforced — per-tool restriction is deferred to the MCP sub-project. Sessions are persistent across inputs within a process, so a loaded skill stays active for subsequent turns.
 
+## Sessions & context
+
+Every conversation is a **session**. Daedalus auto-saves the current session after each completed turn (`run()`) and when it shuts down (`dispose()`), writing it to `~/.daedalus/sessions/<id>.json` (override the directory with `DAEDALUS_SESSIONS_DIR`).
+
+To pick up where you left off, start Daedalus with `--resume` to continue the most recent session, or `--resume <id>` for a specific one:
+
+```bash
+daedalus --resume                        # continue the latest session
+daedalus --resume 2026-08-09T23-15-07    # continue a specific session
+```
+
+The persisted system prompt is reused verbatim on resume, so the prompt-cache prefix stays byte-identical across restarts.
+
+### Context budget
+
+History is trimmed at whole-turn boundaries when the estimated token count exceeds the context budget (`maxContextTokens`, default 100,000). The budget comes from the `DAEDALUS_MAX_CONTEXT_TOKENS` environment variable, the `maxContextTokens` config-file field, or the built-in default. Skill bodies are never trimmed while the skill stays loaded. When a trim happens, Daedalus prints a `— context trimmed: N messages kept —` line.
+
+Deferred (see the design spec): REPL `/sessions` and `/resume` commands, model-driven summarization, and exact token counting.
+
 ## Roadmap
 
-This is a first vertical slice. Deferred items — a full permissions system (rules, allow/deny/ask, per-project settings), deeper configuration, a richer TUI, context compression/history trimming, session resume, subagents/multi-agent collaboration, more tools (WebFetch/WebSearch), and more provider adapters — are tracked in the design spec:
+This is a first vertical slice. Deferred items — a full permissions system (rules, allow/deny/ask, per-project settings), deeper configuration, a richer TUI, subagents/multi-agent collaboration, more tools (WebFetch/WebSearch), and more provider adapters — are tracked in the design spec:
 
 [`docs/superpowers/specs/2026-08-09-daedalus-agent-design.md`](docs/superpowers/specs/2026-08-09-daedalus-agent-design.md)
 

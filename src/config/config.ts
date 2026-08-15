@@ -8,6 +8,7 @@ export interface DaedalusConfig {
   apiKey: string;
   baseURL?: string;
   model?: string;
+  maxContextTokens?: number;
 }
 
 interface FileConfig {
@@ -15,6 +16,7 @@ interface FileConfig {
   apiKey?: string;
   baseURL?: string;
   model?: string;
+  maxContextTokens?: number;
 }
 
 function readFileConfig(env: NodeJS.ProcessEnv): FileConfig {
@@ -38,11 +40,15 @@ export function resolveConfig(env: NodeJS.ProcessEnv = process.env): DaedalusCon
   const apiKey = env.DAEDALUS_API_KEY
     ?? (provider === 'openai' ? env.OPENAI_API_KEY : env.ANTHROPIC_API_KEY)
     ?? file.apiKey;
+  const envTokens = env.DAEDALUS_MAX_CONTEXT_TOKENS === undefined ? undefined : Number(env.DAEDALUS_MAX_CONTEXT_TOKENS);
+  const rawTokens = envTokens ?? file.maxContextTokens;
+  const maxContextTokens = typeof rawTokens === 'number' && Number.isFinite(rawTokens) ? rawTokens : undefined;
   return {
     provider,
     apiKey,
     baseURL: env.DAEDALUS_BASE_URL ?? file.baseURL,
     model: env.DAEDALUS_MODEL ?? file.model,
+    ...(maxContextTokens !== undefined ? { maxContextTokens } : {}),
   };
 }
 
