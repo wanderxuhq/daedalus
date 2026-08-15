@@ -109,6 +109,8 @@ Once started you land in the REPL prompt (`›`):
 | `/exit`, `/quit` | Leave the REPL |
 | `/help` | Print available commands |
 | `/skills` | List installed skills |
+| `/sessions` | List saved sessions (newest first) |
+| `/resume [id]` | Continue a saved session in place (no id = the latest) |
 | `/<skill-name>` | Load a skill (e.g. `/review`) into the current session |
 
 Any other input is a prompt for the agent — a prompt submits on the first Enter. For multi-line input, press **Ctrl+Enter** (or, on terminals that distinguish it, **Shift+Enter**) to continue the prompt onto the next line, or end a line with `\` to do the same; then submit with `/run` (or an empty line). The agent runs, streams its response and tool calls, executes tools (asking `y/n` before shell commands), and reports the result.
@@ -165,11 +167,22 @@ daedalus --resume 2026-08-09T23-15-07    # continue a specific session
 
 The persisted system prompt is reused verbatim on resume, so the prompt-cache prefix stays byte-identical across restarts.
 
+You can also switch sessions from inside the REPL without restarting: `/sessions` lists saved sessions (newest first), and `/resume [id]` swaps the live session for a saved one in place — the current session is saved first so nothing is lost, and subsequent turns keep writing to the resumed session's file:
+
+```
+› /sessions
+2026-08-09T23-15-07  5 messages  updated 2026-08-09T23:16:01
+2026-08-09T22-10-00  3 messages  updated 2026-08-09T22:12:00
+Continue one with /resume <id> (no id = the latest).
+› /resume 2026-08-09T22-10-00
+resumed session 2026-08-09T22-10-00 (3 messages)
+```
+
 ### Context budget
 
 History is trimmed at whole-turn boundaries when the estimated token count exceeds the context budget (`maxContextTokens`, default 100,000). The budget comes from the `DAEDALUS_MAX_CONTEXT_TOKENS` environment variable, the `maxContextTokens` config-file field, or the built-in default. A trim cuts to roughly half the budget so trims stay rare and cache misses infrequent. Skill bodies are never trimmed while the skill stays loaded. When a trim happens, Daedalus prints a `— context trimmed: N messages kept —` line.
 
-Deferred (see the design spec): REPL `/sessions` and `/resume` commands, model-driven summarization, and exact token counting.
+Deferred (see the design spec): model-driven summarization and exact token counting.
 
 ## Roadmap
 

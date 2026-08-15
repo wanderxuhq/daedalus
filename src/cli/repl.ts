@@ -3,6 +3,7 @@ import { stdin as input, stdout as output } from 'node:process';
 import { ANSI } from './render.ts';
 import type { SkillInfo } from '../core/skills/types.ts';
 import type { CoreEvent } from '../core/events.ts';
+import type { SessionMeta } from '../core/session-store.ts';
 import type { Key } from 'node:readline';
 
 /** readline hides `_ttyWrite` from its public types; declare the slot we patch. */
@@ -34,18 +35,20 @@ export interface EngineLike {
   skills: SkillInfo[];
   loadSkill(name: string): Promise<SkillInfo>;
   setAskPermission(ask: (action: string, target: string) => Promise<boolean>): void;
+  listSessions(): Promise<SessionMeta[]>;
+  resume(id?: string): Promise<SessionMeta>;
 }
 
 export type ReplLineResult = 'exit' | 'handled' | 'unhandled';
 
-const RESERVED = new Set(['exit', 'quit', 'help', 'skills', 'run']);
+const RESERVED = new Set(['exit', 'quit', 'help', 'skills', 'run', 'sessions', 'resume']);
 
 /** Handle one line of REPL input as a command. Returns how it was handled. */
 export async function handleReplLine(line: string, engine: EngineLike): Promise<ReplLineResult> {
   const trimmed = line.trim();
   if (trimmed === '/exit' || trimmed === '/quit') return 'exit';
   if (trimmed === '/help') {
-    console.log('Commands: /help, /exit, /skills, /<skill-name>. A prompt submits on Enter; Ctrl+Enter (or a trailing \\) continues onto the next line; /run submits the buffered multi-line prompt.');
+    console.log('Commands: /help, /exit, /skills, /sessions, /resume [id], /<skill-name>. A prompt submits on Enter; Ctrl+Enter (or a trailing \\) continues onto the next line; /run submits the buffered multi-line prompt.');
     return 'handled';
   }
   if (trimmed === '/skills') {
@@ -53,6 +56,28 @@ export async function handleReplLine(line: string, engine: EngineLike): Promise<
       console.log(`${ANSI.bold}${s.name}${ANSI.reset}${s.userInvocable ? '' : ' (user-only)'}: ${s.description}`);
     }
     if (engine.skills.length === 0) console.log('No skills installed.');
+    return 'handled';
+  }
+  if (trimmed === '/sessions') {
+    const sessions = await engine.listSessions();
+    if (sessions.length === 0) {
+      console.log('No sessions yet — your conversations are saved after each run.');
+    } else {
+      for (const s of sessions) {
+        console.log(`${ANSI.bold}${s.id}${ANSI.reset}  ${s.messageCount} messages  updated ${s.updatedAt}`);
+      }
+      console.log(`Continue one with ${ANSI.bold}/resume <id>${ANSI.reset} (no id = the latest).`);
+    }
+    return 'handled';
+  }
+  if (trimmed === '/resume' || trimmed.startsWith('/resume ')) {
+    const id = trimmed === '/resume' ? undefined : trimmed.slice('/resume'.length).trim();
+    try {
+      const meta = await engine.resume(id);
+      console.log(`${ANSI.green}resumed session ${meta.id}${ANSI.reset} (${meta.messageCount} messages)`);
+    } catch (e) {
+      console.error(`${ANSI.red}${(e as Error).message}${ANSI.reset}`);
+    }
     return 'handled';
   }
   if (trimmed.startsWith('/') && !trimmed.includes(' ') && !RESERVED.has(trimmed.slice(1))) {

@@ -7,7 +7,7 @@ import type { SessionState } from './session.ts';
 import { SkillRegistry } from './skills/registry.ts';
 import type { SkillInfo } from './skills/types.ts';
 import { createSkillTool } from './skills/skill-tool.ts';
-import type { SessionStore } from './session-store.ts';
+import type { SessionMeta, SessionStore } from './session-store.ts';
 import { runAgent } from '../agent/loop.ts';
 import { buildSystemPrompt } from './system-prompt.ts';
 
@@ -54,17 +54,7 @@ export class DaedalusEngine {
     this.maxContextTokens = opts.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS;
     this.sessionId = opts.sessionId;
     if (opts.initialState) {
-      // Restore verbatim: the persisted system message is reused as-is so the cache
-      // prefix stays byte-identical across a resume (design §3.2). Defensive re-add
-      // only when the restored history lacks a system message (old/corrupt state).
-      this.session.replaceMessages(opts.initialState.messages);
-      this.session.restoreLoadedSkills(opts.initialState.loadedSkills);
-      if (!opts.initialState.messages.some((m) => m.role === 'system')) {
-        this.session.replaceMessages([
-          { role: 'system', content: [{ type: 'text', text: buildSystemPrompt() }] },
-          ...opts.initialState.messages,
-        ]);
-      }
+      this.restoreState(opts.initialState);
     } else {
       this.session.addMessage({ role: 'system', content: [{ type: 'text', text: buildSystemPrompt() }] });
     }
@@ -87,6 +77,54 @@ export class DaedalusEngine {
   /** Snapshot the current session (persistence + external consumers). */
   getSessionState(): SessionState {
     return this.session.getState();
+  }
+
+  /** List persisted sessions (newest first). Empty when no store is attached. */
+  async listSessions(): Promise<SessionMeta[]> {
+    if (!this.sessionStore) return [];
+    return this.sessionStore.list();
+  }
+
+  /**
+   * Switch the live session to a persisted one (REPL `/resume`). The current
+   * session is persisted first so switching never drops unsaved history; then the
+   * target's messages and loaded skills replace the in-memory state and later
+   * saves keep writing to the resumed file. Without an id, the most recent
+   * session is used. Returns the resumed session's metadata.
+   */
+  async resume(id?: string): Promise<SessionMeta> {
+    if (!this.sessionStore) throw new Error('Sessions are not persisted (no session store attached)');
+    const target = id ? { id } : await this.sessionStore.latest();
+    if (!target) throw new Error('No session to resume');
+    // Persist the live session under its current id so nothing is lost on switch.
+    // Skip when there is nothing to persist yet — a fresh REPL that never ran a
+    // turn (only the system message) should not litter an empty session file.
+    const live = this.getSessionState();
+    if (this.sessionId || live.messages.length > 1) {
+      this.sessionId = await this.sessionStore.save(live, { id: this.sessionId, cwd: this.cwd });
+    }
+    const loaded = await this.sessionStore.load(target.id);
+    this.restoreState({ messages: loaded.messages, loadedSkills: loaded.loadedSkills });
+    this.sessionId = loaded.id; // continue writing to the resumed session's file
+    return { id: loaded.id, updatedAt: loaded.updatedAt, messageCount: loaded.messages.length };
+  }
+
+  /**
+   * Replace the in-memory state from a persisted snapshot (constructor seed and
+   * REPL `/resume`). Reuses the persisted system message verbatim so the cache
+   * prefix stays byte-identical across a resume (design §3.2); a defensive system
+   * message is PREPENDED only when the restored history lacks one (old/corrupt
+   * state) so system stays at index 0.
+   */
+  private restoreState(state: SessionState): void {
+    this.session.replaceMessages(state.messages);
+    this.session.restoreLoadedSkills(state.loadedSkills);
+    if (!state.messages.some((m) => m.role === 'system')) {
+      this.session.replaceMessages([
+        { role: 'system', content: [{ type: 'text', text: buildSystemPrompt() }] },
+        ...state.messages,
+      ]);
+    }
   }
 
   async loadSkill(name: string): Promise<SkillInfo> {

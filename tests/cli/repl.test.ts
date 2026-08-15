@@ -2,10 +2,13 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { handleReplLine, isNewlineKey } from '../../src/cli/repl.ts';
 import type { SkillInfo } from '../../src/core/skills/types.ts';
+import type { SessionMeta } from '../../src/core/session-store.ts';
 import type { CoreEvent } from '../../src/core/events.ts';
 
 class FakeEngine {
   calls: string[] = [];
+  sessions: SessionMeta[] = [];
+  failResume = false;
   skills: SkillInfo[] = [{ name: 'review', description: 'Review code', body: 'Body', userInvocable: true }];
   async run(prompt: string): Promise<string> {
     this.calls.push(`run:${prompt}`);
@@ -16,6 +19,33 @@ class FakeEngine {
     return { name, description: 'x', body: 'Body', userInvocable: true };
   }
   subscribe(_h: (ev: CoreEvent) => void): () => void { return () => {}; }
+  async listSessions(): Promise<SessionMeta[]> {
+    this.calls.push('list');
+    return this.sessions;
+  }
+  async resume(id?: string): Promise<SessionMeta> {
+    this.calls.push(`resume:${id ?? 'latest'}`);
+    if (this.failResume) throw new Error('No such session');
+    return { id: id ?? 'sess-1', updatedAt: '2026-08-09T00:00:00.000Z', messageCount: 3 };
+  }
+}
+
+/** Capture console.log calls while fn runs. */
+async function withLogs(fn: () => Promise<void>): Promise<string[]> {
+  const lines: string[] = [];
+  const orig = console.log;
+  console.log = (msg: unknown) => { lines.push(String(msg)); };
+  try { await fn(); } finally { console.log = orig; }
+  return lines;
+}
+
+/** Capture console.error calls while fn runs. */
+async function withErrors(fn: () => Promise<void>): Promise<string[]> {
+  const lines: string[] = [];
+  const orig = console.error;
+  console.error = (msg: unknown) => { lines.push(String(msg)); };
+  try { await fn(); } finally { console.error = orig; }
+  return lines;
 }
 
 test('/exit returns exit', async () => {
@@ -33,6 +63,48 @@ test('/skill-name calls loadSkill and returns handled', async () => {
   const engine = new FakeEngine();
   assert.equal(await handleReplLine('/review', engine), 'handled');
   assert.deepEqual(engine.calls, ['load:review']);
+});
+
+test('/sessions lists sessions (id, message count) and returns handled', async () => {
+  const engine = new FakeEngine();
+  engine.sessions = [{ id: 's1', updatedAt: '2026-08-09T10:00:00.000Z', messageCount: 4 }];
+  const lines = await withLogs(async () => { assert.equal(await handleReplLine('/sessions', engine), 'handled'); });
+  assert.deepEqual(engine.calls, ['list']);
+  assert.ok(lines.some((l) => l.includes('s1') && l.includes('4 messages')));
+  assert.ok(lines.some((l) => l.includes('/resume <id>')));
+});
+
+test('/sessions with no sessions prints a hint', async () => {
+  const engine = new FakeEngine();
+  const lines = await withLogs(async () => { assert.equal(await handleReplLine('/sessions', engine), 'handled'); });
+  assert.ok(lines.some((l) => l.includes('No sessions')));
+});
+
+test('/resume <id> calls resume with the id', async () => {
+  const engine = new FakeEngine();
+  assert.equal(await handleReplLine('/resume s1', engine), 'handled');
+  assert.deepEqual(engine.calls, ['resume:s1']);
+});
+
+test('/resume without an id uses the latest session', async () => {
+  const engine = new FakeEngine();
+  assert.equal(await handleReplLine('/resume', engine), 'handled');
+  assert.deepEqual(engine.calls, ['resume:latest']);
+});
+
+test('/resume failure prints the error and returns handled', async () => {
+  const engine = new FakeEngine();
+  engine.failResume = true;
+  const lines = await withErrors(async () => { assert.equal(await handleReplLine('/resume nope', engine), 'handled'); });
+  assert.deepEqual(engine.calls, ['resume:nope']);
+  assert.ok(lines.some((l) => l.includes('No such session')));
+});
+
+test('/resume and /sessions are never treated as skill loads', async () => {
+  const engine = new FakeEngine();
+  await handleReplLine('/resume', engine);
+  await handleReplLine('/sessions', engine);
+  assert.deepEqual(engine.calls, ['resume:latest', 'list']); // no load: calls
 });
 
 test('unknown /command returns handled but no crash', async () => {

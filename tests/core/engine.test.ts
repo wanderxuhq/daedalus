@@ -245,6 +245,83 @@ test('auto-save keeps a single file across runs and dispose (stable session id)'
   rmSync(dir, { recursive: true, force: true });
 });
 
+test('listSessions returns [] without a store and persisted sessions with one', async () => {
+  const bare = new DaedalusEngine(opts());
+  assert.deepEqual(await bare.listSessions(), []);
+  await bare.dispose();
+
+  const dir = join(tmpdir(), `dae-eng-listsess-${Date.now()}`);
+  mkdirSync(dir, { recursive: true });
+  const store = new SessionStore(dir);
+  const engine = new DaedalusEngine({ ...opts(), sessionStore: store });
+  await engine.run('one');
+  const list = await engine.listSessions();
+  assert.equal(list.length, 1);
+  assert.ok(list[0].messageCount >= 2); // system + prompt
+  await engine.dispose();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('resume() throws a clear error without a session store', async () => {
+  const engine = new DaedalusEngine(opts());
+  await assert.rejects(() => engine.resume(), /not persisted/);
+  await engine.dispose();
+});
+
+test('resume() switches to a persisted session and keeps writing to its file', async () => {
+  const dir = join(tmpdir(), `dae-eng-resume-${Date.now()}`);
+  mkdirSync(dir, { recursive: true });
+  const store = new SessionStore(dir);
+  const e1 = new DaedalusEngine({ ...opts(), sessionStore: store });
+  await e1.run('first session turn');
+  await e1.dispose();
+  const meta = (await store.latest())!;
+  await new Promise((r) => setTimeout(r, 1100)); // cross the id slug's second boundary
+
+  // A second engine has its own live session (file B); /resume switches it to A.
+  const e2 = new DaedalusEngine({ ...opts(), sessionStore: store });
+  await e2.run('pre-resume turn');
+  assert.equal((await store.list()).length, 2);
+
+  const resumed = await e2.resume(meta.id);
+  assert.equal(resumed.id, meta.id);
+  await e2.run('resumed turn');
+  await e2.dispose();
+
+  const list = await store.list();
+  assert.equal(list.length, 2); // still A + B — no third file
+  const a = await store.load(meta.id);
+  assert.ok(a.messages.some((m) => m.content.some((c) => c.type === 'text' && c.text === 'resumed turn')));
+  // The pre-resume session was persisted before the switch — nothing was lost.
+  const b = await store.load(list.find((s) => s.id !== meta.id)!.id);
+  assert.ok(b.messages.some((m) => m.content.some((c) => c.type === 'text' && c.text === 'pre-resume turn')));
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('resume() without an id uses the most recent session', async () => {
+  const dir = join(tmpdir(), `dae-eng-resumelatest-${Date.now()}`);
+  mkdirSync(dir, { recursive: true });
+  const store = new SessionStore(dir);
+  const e1 = new DaedalusEngine({ ...opts(), sessionStore: store });
+  await e1.run('first session');
+  await e1.dispose();
+  await new Promise((r) => setTimeout(r, 1100)); // cross the id slug's second boundary
+
+  const e2 = new DaedalusEngine({ ...opts(), sessionStore: store });
+  await e2.run('latest session');
+  await e2.dispose();
+  const latestMeta = (await store.latest())!;
+
+  const e3 = new DaedalusEngine({ ...opts(), sessionStore: store });
+  const resumed = await e3.resume(); // no id → latest (e2's session)
+  assert.equal(resumed.id, latestMeta.id);
+  await e3.run('continued');
+  await e3.dispose();
+  const loaded = await store.load(latestMeta.id);
+  assert.ok(loaded.messages.some((m) => m.content.some((c) => c.type === 'text' && c.text === 'continued')));
+  rmSync(dir, { recursive: true, force: true });
+});
+
 test('resume (initialState + sessionId) continues writing to the same file', async () => {
   const dir = join(tmpdir(), `dae-eng-res-${Date.now()}`);
   mkdirSync(dir, { recursive: true });

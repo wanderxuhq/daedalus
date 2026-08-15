@@ -252,5 +252,5 @@ if (trimmed !== before) {
 ## 8. 后续（Roadmap 跟进，本设计不含）
 
 - **模型驱动压缩**：裁剪接口已预留，后续可用一次低成本摘要调用把被裁区域缩成一条 user 消息替换，并保持新前缀稳定。
-- **REPL `/sessions` / `/resume`**：需要 `EngineLike` 增加会话管理方法并处理会话切换事件，独立跟进。
+- **REPL `/sessions` / `/resume`**：✅ 已实现（2026-08-15 迭代）。`EngineLike` 增加 `listSessions()` / `resume(id?)`；`DaedalusEngine` 在 `resume()` 中先持久化当前会话再切换（`restoreState` 与构造器 `initialState` 播种复用同一私有方法），后续保存继续写被恢复会话的文件。
 - **真实 token 计数**：若未来允许依赖，可换 provider 提供的计数接口。

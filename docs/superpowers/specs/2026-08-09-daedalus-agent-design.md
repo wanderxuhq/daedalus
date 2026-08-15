@@ -240,7 +240,9 @@ interface ToolContext {
 - [ ] 配置完整定稿（待讨论）
 - [ ] 权限系统（规则化：allow/deny/ask 配置、per-project settings、细粒度规则；待讨论后实现）
 - [ ] 丰富 TUI（多面板）
-- [ ] 上下文压缩 / 历史裁剪（优先从末尾裁剪、保留前缀，与 §5.2 缓存策略结合）/ 会话断点恢复
+- [x] 历史裁剪（优先从末尾裁剪、保留前缀，与 §5.2 缓存策略结合；已实现：`trimHistory` + `context_trim`）
+- [x] 会话断点恢复（已实现：`--resume [id]`、REPL `/sessions`、`/resume [id]`）
+- [ ] 上下文压缩（模型驱动摘要，把被裁区域摘要成一条消息）
 - [ ] 子代理（subagents）与多 agent 协作 → 届时评估 langgraph
 - [ ] 更多工具：WebFetch / WebSearch、交互式提问、文件编辑改进
 - [ ] 更多 provider adapter（Azure、Google…）
