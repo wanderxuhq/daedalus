@@ -40,3 +40,35 @@ test('markSkillLoaded is idempotent (no duplicate events)', () => {
   s.markSkillLoaded('review');
   assert.equal(count, 1);
 });
+
+test('getState deep-copies messages and skills', () => {
+  const s = new Session();
+  s.addMessage({ role: 'user', content: [{ type: 'text', text: 'a' }] });
+  s.markSkillLoaded('review');
+  const st = s.getState();
+  assert.equal(st.messages.length, 1);
+  assert.deepEqual(st.loadedSkills, ['review']);
+  // Mutating the returned state must not leak into the session.
+  st.messages[0].content = [];
+  st.loadedSkills.push('x');
+  assert.equal(s.getMessages()[0].content.length, 1);
+  assert.deepEqual(s.getLoadedSkills(), ['review']);
+});
+
+test('replaceMessages swaps the whole history', () => {
+  const s = new Session();
+  s.addMessage({ role: 'system', content: [{ type: 'text', text: 'sys' }] });
+  s.replaceMessages([{ role: 'user', content: [{ type: 'text', text: 'only' }] }]);
+  assert.equal(s.getMessages().length, 1);
+  assert.equal(s.getMessages()[0].role, 'user');
+});
+
+test('restoreLoadedSkills sets the set without emitting events', () => {
+  const s = new Session();
+  const got: string[] = [];
+  s.bus.subscribe((ev) => { if (ev.type === 'skill_load') got.push(ev.name); });
+  s.restoreLoadedSkills(['review', 'fix']);
+  assert.deepEqual(s.getLoadedSkills(), ['review', 'fix']);
+  assert.deepEqual(got, []);
+  assert.equal(s.isSkillLoaded('review'), true);
+});

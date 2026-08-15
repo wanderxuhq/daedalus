@@ -1,6 +1,12 @@
 import type { Message } from '../ai/types.ts';
 import { EventBus } from './events.ts';
 
+/** Serializable snapshot of a session — what SessionStore persists and resume seeds from. */
+export interface SessionState {
+  messages: Message[];
+  loadedSkills: string[];
+}
+
 export class Session {
   readonly bus = new EventBus();
   private msgs: Message[] = [];
@@ -34,5 +40,26 @@ export class Session {
 
   getLoadedSkills(): string[] {
     return [...this.skills];
+  }
+
+  /** Deep copy of messages + skills so callers cannot mutate internal state. */
+  getState(): SessionState {
+    return {
+      messages: this.msgs.map((m) => ({
+        role: m.role,
+        content: m.content.map((b) => ({ ...b })),
+      })),
+      loadedSkills: [...this.skills],
+    };
+  }
+
+  /** Wholesale history swap (trimming / restore). Callers pass fresh arrays. */
+  replaceMessages(msgs: Message[]): void {
+    this.msgs = msgs;
+  }
+
+  /** Restore the loaded-skill set without emitting skill_load events. */
+  restoreLoadedSkills(names: string[]): void {
+    this.skills = new Set(names);
   }
 }
