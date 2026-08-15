@@ -11,6 +11,15 @@ interface TtyWriteHost {
   _ttyWrite(data: string, key: Key): void;
 }
 
+/** Format an elapsed duration in ms as `412ms`, `1.2s` or `1m 05s`. */
+export function formatElapsed(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const s = ms / 1000;
+  if (s < 60) return `${s.toFixed(1)}s`;
+  const m = Math.floor(s / 60);
+  return `${m}m ${String(Math.round(s % 60)).padStart(2, '0')}s`;
+}
+
 /**
  * True when a keypress is Ctrl+Enter / Shift+Enter — a line continuation — as
  * opposed to a plain Enter (submit). Terminals encode the modified Enter either
@@ -177,7 +186,13 @@ export async function runRepl(engine: EngineLike, opts: { autoApprove?: boolean 
   // full answer solely in the terminal 'done' with no deltas. A tool call resets
   // the flag: an answer streamed after the last tool call was rendered, but one
   // that never produced deltas still gets the echo.
+  //
+  // A run always ends with an explicit status line (`✓ done in 1.2s` / `✗ error
+  // after …`) so the prompt `›` is never ambiguous: while a task is in flight the
+  // last line shows the `— running —` header or streaming output; once it
+  // returns, the status line tells you the task actually finished.
   const submit = async (promptText: string) => {
+    const startedAt = Date.now();
     console.log(ANSI.blue + '— running —' + ANSI.reset);
     let rendered = false;
     const unsub = engine.subscribe((ev) => {
@@ -187,8 +202,9 @@ export async function runRepl(engine: EngineLike, opts: { autoApprove?: boolean 
     try {
       const text = await engine.run(promptText);
       if (!rendered && text) console.log(ANSI.dim + text + ANSI.reset);
+      console.log(ANSI.green + `✓ done in ${formatElapsed(Date.now() - startedAt)}` + ANSI.reset);
     } catch (e) {
-      console.error(ANSI.red + `error: ${(e as Error).message}` + ANSI.reset);
+      console.error(ANSI.red + `✗ error after ${formatElapsed(Date.now() - startedAt)}: ${(e as Error).message}` + ANSI.reset);
     } finally {
       unsub();
     }

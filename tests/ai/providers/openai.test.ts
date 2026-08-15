@@ -36,6 +36,31 @@ test('converts tool definitions', () => {
   assert.equal(body.tools[0].function.parameters.type, 'object');
 });
 
+test('thinking enabled adds reasoning_effort, absent thinking leaves body untouched', () => {
+  const messages: Message[] = [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }];
+  const plain = toOpenAIBody({ model: 'm', messages });
+  assert.equal('reasoning_effort' in plain, false);
+  const medium = toOpenAIBody({ model: 'm', messages, thinking: { enabled: true } });
+  assert.equal(medium.reasoning_effort, 'medium');
+  const low = toOpenAIBody({ model: 'm', messages, thinking: { enabled: true, budgetTokens: 512 } });
+  assert.equal(low.reasoning_effort, 'low');
+  const high = toOpenAIBody({ model: 'm', messages, thinking: { enabled: true, budgetTokens: 16384 } });
+  assert.equal(high.reasoning_effort, 'high');
+});
+
+test('reasoning_content deltas stream as thinking_delta but are not persisted in done', () => {
+  const events = openaiEventsToIR([
+    { choices: [{ index: 0, delta: { reasoning_content: 'Let me ' } }] },
+    { choices: [{ index: 0, delta: { reasoning_content: 'think.' } }] },
+    { choices: [{ index: 0, delta: { content: 'Hello' } }] },
+  ]);
+  const types = events.map((e) => e.type);
+  assert.deepEqual(types, ['thinking_delta', 'thinking_delta', 'text_delta', 'done']);
+  const done = events.find((e) => e.type === 'done')!;
+  assert.equal(done.type, 'done');
+  assert.deepEqual(done.message.content, [{ type: 'text', text: 'Hello' }]);
+});
+
 test('converts openai SSE payloads to IR events', () => {
   const payloads = [
     { choices: [{ delta: { content: 'Hi' } }] },
@@ -133,6 +158,39 @@ test('streamChat flushes and yields an error event when the stream ends with a t
   assert.ok(errEv.error instanceof AiError);
   assert.equal(errEv.error.message, 'boom: mid-stream failure');
   assert.equal(errEv.error.kind, 'server');
+});
+
+test('streamChat emits a terminal done event for an empty completion (no text, no tool calls)', async () => {
+  const origFetch = globalThis.fetch;
+  // Empty completions happen (content filters, local models, max_tokens=0):
+  // the delta carries only finish_reason, then [DONE]. The adapter must still
+  // terminate with a 'done' event — otherwise runAgent throws the protocol
+  // error "stream ended without a terminal done or error event".
+  const payloads = [{ choices: [{ delta: {}, finish_reason: 'stop' }] }];
+  const sseChunks = payloads.map((p) => `data: ${JSON.stringify(p)}\n\n`).concat('data: [DONE]\n\n');
+  const stream = new ReadableStream<Uint8Array>({
+    start(controller) {
+      for (const chunk of sseChunks) controller.enqueue(new TextEncoder().encode(chunk));
+      controller.close();
+    },
+  });
+  globalThis.fetch = mock.fn(async () => new Response(stream, { status: 200 })) as typeof fetch;
+
+  const client = createOpenAIClient({ apiKey: 'k', baseURL: 'https://x', maxRetries: 0 });
+  const events: StreamEvent[] = [];
+  for await (const ev of client.streamChat({
+    model: 'm',
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+  })) {
+    events.push(ev);
+  }
+  globalThis.fetch = origFetch;
+
+  const types = events.map((e) => e.type);
+  assert.deepEqual(types, ['done']);
+  const done = events.find((e) => e.type === 'done');
+  assert.ok(done && done.type === 'done');
+  assert.deepEqual(done.message.content, []);
 });
 
 test('streamChat flushes accumulated output when the stream closes WITHOUT a [DONE] sentinel', async () => {

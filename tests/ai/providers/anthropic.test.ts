@@ -40,6 +40,51 @@ test('converts tool_call and tool_result blocks', () => {
   assert.equal(body.messages[1].content[0].tool_use_id, 't1');
 });
 
+test('thinking enabled adds a thinking block with budget and drops temperature', () => {
+  const messages: Message[] = [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }];
+  const plain = toAnthropicBody({ model: 'm', messages, temperature: 0.7 });
+  assert.equal('thinking' in plain, false);
+  assert.equal(plain.temperature, 0.7);
+  const body = toAnthropicBody({ model: 'm', messages, temperature: 0.7, thinking: { enabled: true } });
+  assert.deepEqual(body.thinking, { type: 'enabled', budget_tokens: 4096 });
+  assert.equal('temperature' in body, false);
+  assert.equal(body.max_tokens, 8192); // 4096 budget + 1 < default 8192
+  const custom = toAnthropicBody({ model: 'm', messages, maxTokens: 1024, thinking: { enabled: true, budgetTokens: 2048 } });
+  assert.deepEqual(custom.thinking, { type: 'enabled', budget_tokens: 2048 });
+  assert.equal(custom.max_tokens, 2049); // bumped above budget
+});
+
+test('tool_result turns after thinking prepend redacted_thinking signatures', () => {
+  const messages: Message[] = [
+    { role: 'assistant', content: [
+      { type: 'thinking', thinking: 'hmm', signature: 'sig-abc' },
+      { type: 'tool_call', id: 't1', name: 'bash', input: { command: 'ls' } },
+    ] },
+    { role: 'user', content: [{ type: 'tool_result', toolCallId: 't1', content: 'out' }] },
+  ];
+  const body = toAnthropicBody({ model: 'm', messages });
+  const toolResultTurn = body.messages[1] as { role: string; content: Record<string, unknown>[] };
+  assert.equal(toolResultTurn.content[0].type, 'redacted_thinking');
+  assert.equal(toolResultTurn.content[0].data, 'sig-abc');
+  assert.equal(toolResultTurn.content[1].type, 'tool_result');
+});
+
+test('thinking blocks carry their signature into the done message', () => {
+  const payloads = [
+    { type: 'message_start', message: { id: 'm1' } },
+    { type: 'content_block_start', index: 0, content_block: { type: 'thinking', thinking: '', signature: 'sig-xyz' } },
+    { type: 'content_block_delta', index: 0, delta: { type: 'thinking_delta', thinking: 'pondering' } },
+    { type: 'message_stop' },
+  ];
+  const events = anthropicEventsToIR(payloads);
+  const done = events.find((e) => e.type === 'done')!;
+  assert.equal(done.type, 'done');
+  const thinking = done.message.content.find((c) => c.type === 'thinking')!;
+  assert.equal(thinking.type, 'thinking');
+  assert.equal(thinking.thinking, 'pondering');
+  assert.equal(thinking.signature, 'sig-xyz');
+});
+
 test('converts anthropic SSE payloads to IR events', () => {
   const payloads = [
     { type: 'message_start', message: { id: 'm1' } },

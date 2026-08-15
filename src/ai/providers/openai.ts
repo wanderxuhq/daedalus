@@ -14,6 +14,14 @@ export interface OpenAIClientConfig {
 const DEFAULT_MODEL = 'gpt-4o';
 const DEFAULT_BASE = 'https://api.openai.com/v1';
 
+/** Map a token budget to the closest reasoning_effort OpenAI-compatible tiers. */
+function effortForBudget(budgetTokens?: number): string {
+  if (budgetTokens === undefined) return 'medium';
+  if (budgetTokens < 2048) return 'low';
+  if (budgetTokens < 8192) return 'medium';
+  return 'high';
+}
+
 export function toOpenAIBody(params: ChatParams): Record<string, unknown> {
   const messages: Record<string, unknown>[] = [];
   for (const m of params.messages) {
@@ -51,6 +59,11 @@ export function toOpenAIBody(params: ChatParams): Record<string, unknown> {
   };
   if (params.maxTokens !== undefined) body.max_tokens = params.maxTokens;
   if (params.temperature !== undefined) body.temperature = params.temperature;
+  // Extended thinking on OpenAI-compatible endpoints: reasoning_effort is the
+  // closest standard knob. Endpoints that ignore it simply answer normally.
+  if (params.thinking?.enabled === true) {
+    body.reasoning_effort = effortForBudget(params.thinking.budgetTokens);
+  }
   if (params.tools?.length) {
     body.tools = params.tools.map((t) => ({
       type: 'function',
@@ -82,6 +95,13 @@ export class OpenAISSEConverter {
         this.textParts.push(delta.content);
         events.push({ type: 'text_delta', text: delta.content });
       }
+      // Reasoning models (o-series, deepseek-reasoner, most gateways) stream
+      // chain-of-thought as reasoning_content. Yield it live as thinking; it is
+      // intentionally NOT persisted into the done message, because the
+      // OpenAI-compatible message format cannot carry it back on later turns.
+      if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
+        events.push({ type: 'thinking_delta', thinking: delta.reasoning_content });
+      }
       const tcs = delta.tool_calls as Record<string, unknown>[] | undefined;
       if (tcs) {
         for (const tc of tcs) {
@@ -111,7 +131,14 @@ export class OpenAISSEConverter {
     return events;
   }
 
-  /** Terminal 'done' event built from the accumulated stream state; [] if nothing arrived. */
+  /** Terminal 'done' event built from the accumulated stream state.
+   *
+   * Always emitted — an empty completion (no text, no tool calls, e.g. a
+   * content-filtered or locally-served response) is still a valid terminal
+   * turn, not an adapter failure. Omitting it made runAgent throw the protocol
+   * error "stream ended without a terminal done or error event" on empty
+   * completions.
+   */
   done(): StreamEvent[] {
     if (this.doneEmitted) return [];
     this.doneEmitted = true;
@@ -123,7 +150,6 @@ export class OpenAISSEConverter {
       try { input = JSON.parse(call.argParts.join('')); } catch { input = call.argParts.join(''); }
       content.push({ type: 'tool_call', id: call.id, name: call.name, input });
     }
-    if (content.length === 0) return [];
     return [{ type: 'done', message: { role: 'assistant', content } }];
   }
 }

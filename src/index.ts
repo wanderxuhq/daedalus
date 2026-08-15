@@ -17,6 +17,8 @@ export { Session } from './core/session.ts';
 export { SkillRegistry, parseSkillDir } from './core/skills/registry.ts';
 export type { SkillInfo, SkillFrontmatter } from './core/skills/types.ts';
 export { createSkillTool } from './core/skills/skill-tool.ts';
+export { createDelegateTool, buildSubagentPrompt } from './core/delegate.ts';
+export type { DelegateToolOptions, DelegateInput } from './core/delegate.ts';
 export { buildSystemPrompt } from './core/system-prompt.ts';
 export { estimateTokens, trimHistory, MIN_KEEP_TURNS } from './agent/context.ts';
 export type { TrimOptions } from './agent/context.ts';

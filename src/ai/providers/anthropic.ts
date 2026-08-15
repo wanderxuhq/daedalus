@@ -14,6 +14,8 @@ export interface AnthropicClientConfig {
 const DEFAULT_MODEL = 'claude-sonnet-4-5';
 const DEFAULT_BASE = 'https://api.anthropic.com';
 const DEFAULT_MAX_TOKENS = 8192;
+/** Anthropic requires budget_tokens >= 1024 and < max_tokens. */
+const DEFAULT_THINKING_BUDGET = 4096;
 
 export function toAnthropicBody(params: ChatParams): Record<string, unknown> {
   const systemText = params.messages
@@ -23,13 +25,24 @@ export function toAnthropicBody(params: ChatParams): Record<string, unknown> {
     .map((c) => c.text)
     .join('\n');
 
+  const thinkingEnabled = params.thinking?.enabled === true;
+  const thinkingBudget = params.thinking?.budgetTokens ?? DEFAULT_THINKING_BUDGET;
+  // Anthropic: max_tokens must exceed the thinking budget (only matters when thinking is on).
+  const maxTokens = thinkingEnabled
+    ? Math.max(params.maxTokens ?? DEFAULT_MAX_TOKENS, thinkingBudget + 1)
+    : (params.maxTokens ?? DEFAULT_MAX_TOKENS);
+
   const body: Record<string, unknown> = {
     model: params.model,
-    max_tokens: params.maxTokens ?? DEFAULT_MAX_TOKENS,
+    max_tokens: maxTokens,
     stream: true,
   };
   if (systemText) body.system = systemText;
-  if (params.temperature !== undefined) body.temperature = params.temperature;
+  // Anthropic forbids temperature alongside extended thinking.
+  if (!thinkingEnabled && params.temperature !== undefined) body.temperature = params.temperature;
+  if (thinkingEnabled) {
+    body.thinking = { type: 'enabled', budget_tokens: thinkingBudget };
+  }
 
   const cacheEnabled = params.cache?.enabled !== false;
 
@@ -37,7 +50,8 @@ export function toAnthropicBody(params: ChatParams): Record<string, unknown> {
     body.system = [{ type: 'text', text: systemText, cache_control: { type: 'ephemeral' } }];
   }
 
-  const messages = params.messages.filter((m) => m.role !== 'system').map((m) => toAnthropicMessage(m));
+  const nonSystem = params.messages.filter((m) => m.role !== 'system');
+  const messages = nonSystem.map((m, i) => toAnthropicMessage(m, nonSystem[i - 1]));
   if (messages.length > 0 && cacheEnabled) {
     const last = messages[messages.length - 1] as Record<string, unknown>;
     last.cache_control = { type: 'ephemeral' };
@@ -56,36 +70,56 @@ export function toAnthropicBody(params: ChatParams): Record<string, unknown> {
   return body;
 }
 
-function toAnthropicMessage(m: Message): Record<string, unknown> {
-  const content = m.content.map((block): Record<string, unknown> => {
+/**
+ * Convert one IR message to the Anthropic wire format. When the message is a
+ * user turn carrying tool results and the immediately preceding assistant turn
+ * contained thinking blocks (thinking + tool_use), the API requires the user
+ * message to begin with redacted_thinking blocks carrying those signatures.
+ */
+function toAnthropicMessage(m: Message, previous: Message | undefined): Record<string, unknown> {
+  const isToolResultTurn = m.role === 'user' && m.content.some((c) => c.type === 'tool_result');
+  const thinkingSignatures = previous?.role === 'assistant'
+    ? previous.content.filter((c): c is Extract<ContentBlock, { type: 'thinking' }> => c.type === 'thinking' && !!c.signature)
+    : [];
+  const content: Record<string, unknown>[] = [];
+  if (isToolResultTurn && thinkingSignatures.length > 0) {
+    for (const t of thinkingSignatures) {
+      content.push({ type: 'redacted_thinking', data: t.signature });
+    }
+  }
+  for (const block of m.content) {
     switch (block.type) {
       case 'text':
-        return { type: 'text', text: block.text };
+        content.push({ type: 'text', text: block.text });
+        break;
       case 'thinking':
-        return { type: 'thinking', thinking: block.thinking };
+        content.push({ type: 'thinking', thinking: block.thinking });
+        break;
       case 'tool_call':
-        return { type: 'tool_use', id: block.id, name: block.name, input: block.input };
+        content.push({ type: 'tool_use', id: block.id, name: block.name, input: block.input });
+        break;
       case 'tool_result':
-        return {
+        content.push({
           type: 'tool_result',
           tool_use_id: block.toolCallId,
           content: block.content,
           ...(block.isError ? { is_error: true } : {}),
-        };
+        });
+        break;
     }
-  });
+  }
   return { role: m.role, content };
 }
 
 export function anthropicEventsToIR(payloads: Record<string, unknown>[]): StreamEvent[] {
   const events: StreamEvent[] = [];
-  const blocks: { type: string; id?: string; name?: string; text?: string; thinking?: string; inputJson?: string }[] = [];
+  const blocks: { type: string; id?: string; name?: string; text?: string; thinking?: string; signature?: string; inputJson?: string }[] = [];
 
   for (const p of payloads) {
     switch (p.type) {
       case 'content_block_start': {
-        const cb = p.content_block as { type: string; id?: string; name?: string; text?: string; thinking?: string };
-        blocks.push({ type: cb.type, id: cb.id, name: cb.name, text: cb.text ?? '', thinking: cb.thinking ?? '' });
+        const cb = p.content_block as { type: string; id?: string; name?: string; text?: string; thinking?: string; signature?: string };
+        blocks.push({ type: cb.type, id: cb.id, name: cb.name, text: cb.text ?? '', thinking: cb.thinking ?? '', signature: cb.signature });
         if (cb.type === 'thinking') events.push({ type: 'thinking_delta', thinking: '' });
         if (cb.type === 'tool_use') events.push({ type: 'tool_call_start', id: cb.id!, name: cb.name! });
         break;
@@ -108,7 +142,7 @@ export function anthropicEventsToIR(payloads: Record<string, unknown>[]): Stream
       case 'message_stop': {
         const content: import('../types.ts').ContentBlock[] = blocks.map((b) => {
           if (b.type === 'text') return { type: 'text', text: b.text ?? '' };
-          if (b.type === 'thinking') return { type: 'thinking', thinking: b.thinking ?? '' };
+          if (b.type === 'thinking') return { type: 'thinking', thinking: b.thinking ?? '', ...(b.signature ? { signature: b.signature } : {}) };
           if (b.type === 'tool_use') {
             let input: unknown = {};
             try { input = JSON.parse(b.inputJson ?? '{}'); } catch { input = b.inputJson ?? {}; }

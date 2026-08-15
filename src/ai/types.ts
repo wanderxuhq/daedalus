@@ -1,6 +1,6 @@
 export type ContentBlock =
   | { type: 'text'; text: string }
-  | { type: 'thinking'; thinking: string }
+  | { type: 'thinking'; thinking: string; signature?: string }
   | { type: 'tool_call'; id: string; name: string; input: unknown }
   | { type: 'tool_result'; toolCallId: string; content: string; isError?: boolean };
 
@@ -15,6 +15,12 @@ export interface ToolDefinition {
   inputSchema: unknown;
 }
 
+export interface ThinkingParams {
+  enabled: boolean;
+  /** Thinking budget in tokens; also drives OpenAI-compatible reasoning effort. */
+  budgetTokens?: number;
+}
+
 export interface ChatParams {
   model?: string;           // optional: client-level default is applied when omitted
   messages: Message[];
@@ -23,6 +29,8 @@ export interface ChatParams {
   temperature?: number;
   signal?: AbortSignal;
   cache?: { enabled: boolean };
+  /** Extended thinking request. Absent → the provider's default (no thinking). */
+  thinking?: ThinkingParams;
 }
 
 export type StreamEvent =

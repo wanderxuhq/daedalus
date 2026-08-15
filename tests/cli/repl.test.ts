@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { handleReplLine, isNewlineKey, resolveAutoApprove } from '../../src/cli/repl.ts';
+import { handleReplLine, isNewlineKey, resolveAutoApprove, formatElapsed } from '../../src/cli/repl.ts';
 import type { SkillInfo } from '../../src/core/skills/types.ts';
 import type { SessionMeta } from '../../src/core/session-store.ts';
 import type { CoreEvent } from '../../src/core/events.ts';
@@ -158,4 +158,22 @@ test('resolveAutoApprove: config autoApprove drives the default', () => {
   assert.equal(resolveAutoApprove({ autoApprove: true }), true);
   assert.equal(resolveAutoApprove({ autoApprove: false }), false);
   assert.equal(resolveAutoApprove({}), false);
+});
+
+test('formatElapsed: sub-second durations show ms', () => {
+  assert.equal(formatElapsed(0), '0ms');
+  assert.equal(formatElapsed(412), '412ms');
+  assert.equal(formatElapsed(999), '999ms');
+});
+
+test('formatElapsed: seconds show one decimal', () => {
+  assert.equal(formatElapsed(1000), '1.0s');
+  assert.equal(formatElapsed(1234), '1.2s');
+  assert.equal(formatElapsed(59_500), '59.5s');
+});
+
+test('formatElapsed: minutes show m ss', () => {
+  assert.equal(formatElapsed(60_000), '1m 00s');
+  assert.equal(formatElapsed(65_000), '1m 05s');
+  assert.equal(formatElapsed(3_725_000), '62m 05s');
 });

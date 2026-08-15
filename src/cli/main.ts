@@ -13,7 +13,7 @@ import { parseFlags } from './flags.ts';
 
 const flags = parseFlags(process.argv.slice(2));
 if (flags.help) {
-  console.log('daedalus — a terminal agent\n\nUsage: daedalus [--provider openai|anthropic] [--model M] [--base-url URL] [--resume [id]] [--auto]\n\n--auto auto-approves tool permissions (bash/write run without y/n prompts).\n\nConfig: ~/.daedalus/config.json and DAEDALUS_* env vars. First run starts an interactive setup.');
+  console.log('daedalus — a terminal agent\n\nUsage: daedalus [--provider openai|anthropic] [--model M] [--base-url URL] [--resume [id]] [--auto]\n\n--auto auto-approves tool permissions (bash/write run without y/n prompts).\nExtended thinking is ON by default; disable with DAEDALUS_THINKING=0 or "thinking": false in config.\n\nConfig: ~/.daedalus/config.json and DAEDALUS_* env vars. First run starts an interactive setup.');
   process.exit(0);
 }
 
@@ -61,6 +61,8 @@ const engine = new DaedalusEngine({
   sessionId,
   sessionStore: store,
   maxContextTokens: base.maxContextTokens,
+  thinking: base.thinking,
+  thinkingBudgetTokens: base.thinkingBudgetTokens,
 });
 engine.subscribe(renderEvent);
 const autoApprove = flags.auto === '1' || base.autoApprove === true;

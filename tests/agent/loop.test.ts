@@ -121,6 +121,38 @@ test('stops after maxIterations', async () => {
   assert.equal(result, '');
 });
 
+test('an empty completion ends the turn without persisting an empty assistant message', async () => {
+  // Reasoning models / gateways can end a turn with no text and no tool calls
+  // (only reasoning_content streamed, which is deliberately not persisted). The
+  // done event is still terminal — but the resulting content:[] assistant
+  // message must NOT be stored: the next request would re-send it and the API
+  // rejects it ("content or tool_calls must be set").
+  const client: AiClient = {
+    async *streamChat() {
+      yield { type: 'done', message: { role: 'assistant', content: [] } };
+    },
+  };
+  const session = makeSession();
+  const result = await runAgent({ client, session, prompt: 'hi', tools: [], ...CTX });
+  assert.equal(result, '');
+  const assistants = session.getMessages().filter((m) => m.role === 'assistant');
+  assert.equal(assistants.length, 0);
+  // the prompt is still in history; only the contentless assistant turn was dropped
+  assert.ok(session.getMessages().some((m) => m.role === 'user'));
+});
+
+test('an empty-text-only completion is not persisted either', async () => {
+  const client: AiClient = {
+    async *streamChat() {
+      yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: '' }] } };
+    },
+  };
+  const session = makeSession();
+  await runAgent({ client, session, prompt: 'hi', tools: [], ...CTX });
+  const assistants = session.getMessages().filter((m) => m.role === 'assistant');
+  assert.equal(assistants.length, 0);
+});
+
 test('throws AiError when streamChat ends without a terminal done or error event', async () => {
   const client: AiClient = {
     async *streamChat() {

@@ -10,6 +10,7 @@ import { createSkillTool } from './skills/skill-tool.ts';
 import type { SessionMeta, SessionStore } from './session-store.ts';
 import { runAgent } from '../agent/loop.ts';
 import { buildSystemPrompt } from './system-prompt.ts';
+import { createDelegateTool } from './delegate.ts';
 
 export const DEFAULT_MAX_CONTEXT_TOKENS = 100_000;
 
@@ -28,6 +29,10 @@ export interface EngineOptions {
   sessionStore?: SessionStore;
   /** History budget in estimated tokens. Default {@link DEFAULT_MAX_CONTEXT_TOKENS}. */
   maxContextTokens?: number;
+  /** Extended thinking on by default; set false to disable. */
+  thinking?: boolean;
+  /** Thinking budget in tokens (Anthropic) / effort (OpenAI-compatible). */
+  thinkingBudgetTokens?: number;
 }
 
 export class DaedalusEngine {
@@ -41,6 +46,8 @@ export class DaedalusEngine {
   private sessionStore?: SessionStore;
   private maxContextTokens: number;
   private sessionId: string | undefined;
+  private thinking: boolean;
+  private thinkingBudgetTokens?: number;
 
   constructor(opts: EngineOptions) {
     this.session = new Session();
@@ -53,12 +60,28 @@ export class DaedalusEngine {
     this.sessionStore = opts.sessionStore;
     this.maxContextTokens = opts.maxContextTokens ?? DEFAULT_MAX_CONTEXT_TOKENS;
     this.sessionId = opts.sessionId;
+    this.thinking = opts.thinking ?? true;
+    this.thinkingBudgetTokens = opts.thinkingBudgetTokens;
     if (opts.initialState) {
       this.restoreState(opts.initialState);
     } else {
       this.session.addMessage({ role: 'system', content: [{ type: 'text', text: buildSystemPrompt() }] });
     }
-    this.tools = [...builtinTools, createSkillTool(this.registry, this.session)];
+    this.tools = [
+      ...builtinTools,
+      createSkillTool(this.registry, this.session),
+      // Orchestrator/worker: hand self-contained tasks to a subagent that runs
+      // in its own session, so its tool calls never pollute the main context.
+      // availableTools excludes delegate itself — that is the recursion guard.
+      createDelegateTool({
+        client: opts.client,
+        cwd: opts.cwd,
+        askPermission: () => this.askPermission,
+        availableTools: builtinTools,
+        maxContextTokens: opts.maxContextTokens,
+        thinking: { enabled: this.thinking, ...(this.thinkingBudgetTokens !== undefined ? { budgetTokens: this.thinkingBudgetTokens } : {}) },
+      }),
+    ];
   }
 
   subscribe(handler: (ev: CoreEvent) => void): () => void {
@@ -150,6 +173,7 @@ export class DaedalusEngine {
       askPermission: this.askPermission,
       maxIterations: this.maxIterations,
       maxContextTokens: this.maxContextTokens,
+      thinking: { enabled: this.thinking, ...(this.thinkingBudgetTokens !== undefined ? { budgetTokens: this.thinkingBudgetTokens } : {}) },
     });
     await this.persist();
     return result;

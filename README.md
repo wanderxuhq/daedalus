@@ -54,7 +54,7 @@ Create `~/.daedalus/config.json`:
 }
 ```
 
-All fields are optional. `autoApprove` (default `false`) answers every tool permission prompt (shell commands, file overwrites) without asking — see [Auto-approve mode](#auto-approve-mode). For OpenAI:
+All fields are optional. `autoApprove` (default `false`) answers every tool permission prompt (shell commands, file overwrites) without asking — see [Auto-approve mode](#auto-approve-mode). `thinking` (default `true`) enables extended thinking — the model's chain-of-thought is requested on every turn and rendered as dim italic text. Set `"thinking": false` to disable. For OpenAI:
 
 ```json
 {
@@ -79,6 +79,8 @@ Daedalus-specific variables:
 | `DAEDALUS_BASE_URL` | Provider base URL (overrides config file) |
 | `DAEDALUS_MAX_CONTEXT_TOKENS` | Context budget in tokens (overrides config file; default 100,000) |
 | `DAEDALUS_AUTO_APPROVE` | Auto-approve tool permissions (any value except `0`/`false`/empty; overrides config file, `--auto` overrides this) |
+| `DAEDALUS_THINKING` | Extended thinking on by default; set `0`/`false` to disable (overrides config file) |
+| `DAEDALUS_THINKING_BUDGET` | Thinking budget in tokens (Anthropic) / reasoning effort (OpenAI-compatible) |
 | `DAEDALUS_SESSIONS_DIR` | Directory for persisted sessions (default `~/.daedalus/sessions`) |
 
 Standard provider keys are also honored when `DAEDALUS_API_KEY` is not set:
@@ -132,7 +134,7 @@ Any other input is a prompt for the agent — a prompt submits on the first Ente
 
 ## Tools
 
-Seven built-in tools are registered (see `src/tools/registry.ts`); the engine adds an eighth, the `Skill` tool (see [Skills](#skills)):
+Seven built-in tools are registered (see `src/tools/registry.ts`); the engine adds the `Skill` tool (see [Skills](#skills)) and the `delegate` tool (see [Multi-agent](#multi-agent)):
 
 | Tool | Description |
 |---|---|
@@ -144,6 +146,7 @@ Seven built-in tools are registered (see `src/tools/registry.ts`); the engine ad
 | `grep` | Recursively search file contents for a regex pattern; skips `node_modules` and `.git`. |
 | `glob` | Find files matching a glob pattern (`*`, `**`, `?`); skips `node_modules` and `.git`. |
 | `Skill` | Load a skill by name; the skill body arrives as the tool result. Provided by the engine; see Skills. |
+| `delegate` | Run a self-contained task in a separate subagent with its own isolated context; returns only the subagent's final report. Provided by the engine; see Multi-agent. |
 
 ## Skills
 
@@ -168,6 +171,29 @@ Skills are discovered from two locations, in order (the first match for a given 
 The model can load a skill through the `Skill` tool: it picks a name from the tool's listing and the body arrives in the conversation as a tool result. You can also load one yourself from the REPL with `/<skill-name>` (see the REPL commands above).
 
 `allowed-tools` and `disallowed-tools` are parsed but not yet enforced — per-tool restriction is deferred to the MCP sub-project. Sessions are persistent across inputs within a process, so a loaded skill stays active for subsequent turns.
+
+## Multi-agent
+
+Daedalus implements an orchestrator/worker pattern: the main agent can hand a large or self-contained task to a **subagent** via the `delegate` tool, instead of doing it inline.
+
+```jsonc
+{
+  "task": "Add unit tests for the glob matcher to tests/tools/glob.test.ts",
+  "context": "The matcher lives in src/tools/glob.ts. Follow the existing test style in tests/tools/*.test.ts.",
+  "tools": ["read", "grep", "write", "bash"], // optional restriction, default: all built-in
+  "maxIterations": 30 // optional cap
+}
+```
+
+Design properties:
+
+- **Context isolation.** The subagent gets a brand-new session — its own system prompt and your task/context text. It cannot see the main conversation, and its tool calls and intermediate steps never enter the main session. Only its final report returns, as one `tool_result` to the main agent. This is what keeps the main context clean on long jobs.
+- **No recursion.** The subagent is given only the built-in tools; `delegate` itself is never in its toolset, so delegation is exactly one level deep.
+- **Independent budget.** The subagent's history is trimmed against its own `maxContextTokens`, untouched by trims in the main session.
+- **Failure is a tool error.** If the subagent fails (provider error, iteration cap), the `delegate` call returns an error result the main agent can see and adapt to — it does not crash the main turn.
+- **Same permission gate.** Subagent `bash`/`write` calls go through the same `y/n` permission prompt as the main agent (or auto-approve in `--auto` mode).
+
+Reports longer than 20,000 characters are truncated (configurable per call via `maxResultChars`).
 
 ## Sessions & context
 
@@ -201,7 +227,7 @@ Deferred (see the design spec): model-driven summarization and exact token count
 
 ## Roadmap
 
-This is a first vertical slice. Deferred items — a full permissions system (rules, allow/deny/ask, per-project settings), deeper configuration, a richer TUI, subagents/multi-agent collaboration, more tools (WebFetch/WebSearch), and more provider adapters — are tracked in the design spec:
+This is a first vertical slice. Deferred items — a full permissions system (rules, allow/deny/ask, per-project settings), deeper configuration, a richer TUI, more tools (WebFetch/WebSearch), and more provider adapters — are tracked in the design spec:
 
 [`docs/superpowers/specs/2026-08-09-daedalus-agent-design.md`](docs/superpowers/specs/2026-08-09-daedalus-agent-design.md)
 

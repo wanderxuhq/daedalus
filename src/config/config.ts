@@ -11,6 +11,10 @@ export interface DaedalusConfig {
   maxContextTokens?: number;
   /** Auto-approve tool permission prompts (bash/write) instead of asking y/n. */
   autoApprove?: boolean;
+  /** Extended thinking. Defaults to ON — send a thinking budget to the model. */
+  thinking?: boolean;
+  /** Thinking budget in tokens (Anthropic) / effort (OpenAI-compatible). */
+  thinkingBudgetTokens?: number;
 }
 
 interface FileConfig {
@@ -20,6 +24,8 @@ interface FileConfig {
   model?: string;
   maxContextTokens?: number;
   autoApprove?: boolean;
+  thinking?: boolean;
+  thinkingBudgetTokens?: number;
 }
 
 function readFileConfig(env: NodeJS.ProcessEnv): FileConfig {
@@ -36,8 +42,11 @@ function readFileConfig(env: NodeJS.ProcessEnv): FileConfig {
   }
 }
 
+/** Config as resolved without throwing — the apiKey may still be missing. */
+export type ResolvedConfig = Omit<DaedalusConfig, 'apiKey'> & { apiKey?: string };
+
 /** Resolve config from env + file without throwing on a missing key. */
-export function resolveConfig(env: NodeJS.ProcessEnv = process.env): DaedalusConfig {
+export function resolveConfig(env: NodeJS.ProcessEnv = process.env): ResolvedConfig {
   const file = readFileConfig(env);
   const provider = (env.DAEDALUS_PROVIDER ?? file.provider ?? 'anthropic') as AiProviderName;
   const apiKey = env.DAEDALUS_API_KEY
@@ -50,6 +59,15 @@ export function resolveConfig(env: NodeJS.ProcessEnv = process.env): DaedalusCon
   const autoApprove = envAuto === undefined
     ? file.autoApprove
     : envAuto !== '' && envAuto !== '0' && envAuto.toLowerCase() !== 'false';
+  // Thinking is ON by default; explicitly opt out with DAEDALUS_THINKING=0/false
+  // or "thinking": false in the config file.
+  const envThinking = env.DAEDALUS_THINKING;
+  const thinking = envThinking === undefined
+    ? (file.thinking ?? true)
+    : envThinking !== '' && envThinking !== '0' && envThinking.toLowerCase() !== 'false';
+  const envBudget = env.DAEDALUS_THINKING_BUDGET === undefined ? undefined : Number(env.DAEDALUS_THINKING_BUDGET);
+  const rawBudget = envBudget ?? file.thinkingBudgetTokens;
+  const thinkingBudgetTokens = typeof rawBudget === 'number' && Number.isFinite(rawBudget) && rawBudget > 0 ? rawBudget : undefined;
   return {
     provider,
     apiKey,
@@ -57,6 +75,8 @@ export function resolveConfig(env: NodeJS.ProcessEnv = process.env): DaedalusCon
     model: env.DAEDALUS_MODEL ?? file.model,
     ...(maxContextTokens !== undefined ? { maxContextTokens } : {}),
     ...(autoApprove !== undefined ? { autoApprove } : {}),
+    thinking,
+    ...(thinkingBudgetTokens !== undefined ? { thinkingBudgetTokens } : {}),
   };
 }
 
@@ -66,7 +86,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): DaedalusConfig
     const varName = cfg.provider === 'openai' ? 'OPENAI_API_KEY' : 'ANTHROPIC_API_KEY';
     throw new Error(`No API key for provider "${cfg.provider}". Set ${varName} (or DAEDALUS_API_KEY) or add apiKey to ~/.daedalus/config.json`);
   }
-  return cfg;
+  return cfg as DaedalusConfig;
 }
 
 /**

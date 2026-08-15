@@ -1,4 +1,4 @@
-import type { AiClient, StreamEvent, ToolDefinition } from '../ai/types.ts';
+import type { AiClient, Message, StreamEvent, ToolDefinition, ThinkingParams } from '../ai/types.ts';
 import type { Tool, ToolResult } from '../tools/types.ts';
 import { AiError } from '../ai/errors.ts';
 import type { Session } from '../core/session.ts';
@@ -15,9 +15,28 @@ export interface RunAgentParams {
   maxIterations?: number;
   /** History budget in estimated tokens; trimming runs before each iteration. */
   maxContextTokens?: number;
+  /** Extended thinking request forwarded to the model on every turn. */
+  thinking?: ThinkingParams;
 }
 
 const DEFAULT_MAX = 100;
+
+/**
+ * True when an assistant message carries anything the providers can round-trip.
+ * Reasoning models can end a turn with no text and no tool calls (only
+ * reasoning_content streamed, which adapters do not persist); such a message
+ * must not enter the session — the next request would re-send `content: []`
+ * and Anthropic-compatible endpoints reject it ("content or tool_calls must
+ * be set"). An empty-text-only message serializes to `content: null`, the same
+ * rejection.
+ */
+function hasPersistableContent(m: Message): boolean {
+  return m.content.some((c) =>
+    c.type === 'tool_call' ||
+    (c.type === 'text' && c.text.length > 0) ||
+    c.type === 'thinking'
+  );
+}
 
 function toCoreEvent(ev: StreamEvent): CoreEvent {
   switch (ev.type) {
@@ -65,11 +84,12 @@ export async function runAgent(params: RunAgentParams): Promise<string> {
         messages: session.getMessages(),
         tools: toolDefs,
         cache: { enabled: true },
+        ...(params.thinking ? { thinking: params.thinking } : {}),
       })) {
         session.bus.emit(toCoreEvent(ev));
         events.push(ev);
         if (ev.type === 'error') throw ev.error;
-        if (ev.type === 'done') session.addMessage(ev.message);
+        if (ev.type === 'done' && hasPersistableContent(ev.message)) session.addMessage(ev.message);
       }
       // Equivalent of events.findLast(...): scan backwards for the terminal 'done'.
       // findLast is an ES2023 method and this project's tsconfig targets ES2022.

@@ -135,3 +135,26 @@ test('env DAEDALUS_AUTO_APPROVE overrides the config file', () => {
   const cfg = loadConfig({ DAEDALUS_CONFIG_PATH: configPath, DAEDALUS_AUTO_APPROVE: '0' } as NodeJS.ProcessEnv);
   assert.equal(cfg.autoApprove, false);
 });
+
+test('thinking defaults to ON', () => {
+  const cfg = loadConfig({ ANTHROPIC_API_KEY: 'sk-ant-1', DAEDALUS_CONFIG_PATH: NO_CONFIG_PATH } as NodeJS.ProcessEnv);
+  assert.equal(cfg.thinking, true);
+});
+
+test('DAEDALUS_THINKING=0 and false disable thinking', () => {
+  const off = loadConfig({ ANTHROPIC_API_KEY: 'sk-ant-1', DAEDALUS_CONFIG_PATH: NO_CONFIG_PATH, DAEDALUS_THINKING: '0' } as NodeJS.ProcessEnv);
+  assert.equal(off.thinking, false);
+  const off2 = loadConfig({ ANTHROPIC_API_KEY: 'sk-ant-1', DAEDALUS_CONFIG_PATH: NO_CONFIG_PATH, DAEDALUS_THINKING: 'false' } as NodeJS.ProcessEnv);
+  assert.equal(off2.thinking, false);
+});
+
+test('thinking:false in the config file disables the default', () => {
+  const configPath = tempConfigFile(JSON.stringify({ provider: 'openai', apiKey: 'sk-file', thinking: false }));
+  const cfg = loadConfig({ DAEDALUS_CONFIG_PATH: configPath } as NodeJS.ProcessEnv);
+  assert.equal(cfg.thinking, false);
+});
+
+test('DAEDALUS_THINKING_BUDGET parses into thinkingBudgetTokens', () => {
+  const cfg = loadConfig({ ANTHROPIC_API_KEY: 'sk-ant-1', DAEDALUS_CONFIG_PATH: NO_CONFIG_PATH, DAEDALUS_THINKING_BUDGET: '8192' } as NodeJS.ProcessEnv);
+  assert.equal(cfg.thinkingBudgetTokens, 8192);
+});
