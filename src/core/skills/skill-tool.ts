@@ -22,7 +22,7 @@ export function createSkillTool(registry: SkillRegistry, session: Session): Tool
         return { content: `Skill "${name}" is already loaded.` };
       }
       session.markSkillLoaded(name);
-      return { content: skill.body };
+      return { content: `[Skill: ${name}]\n\n${skill.body}` };
     },
   };
 }

@@ -58,3 +58,11 @@ test('missing name returns error result', async () => {
   const res = await tool.execute({}, ctx());
   assert.equal(res.isError, true);
 });
+
+test('Skill tool returns the body prefixed with the [Skill: name] marker', async () => {
+  const session = new Session();
+  const tool = createSkillTool(regWith(['review']), session);
+  const res = await tool.execute({ name: 'review' }, ctx());
+  assert.ok(String(res.content).startsWith('[Skill: review]'));
+  assert.ok(String(res.content).includes('Body of review'));
+});
