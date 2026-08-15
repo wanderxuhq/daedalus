@@ -979,11 +979,16 @@ export class DaedalusEngine {
     if (opts.initialState) {
       // Restore verbatim: the persisted system message is reused as-is so the cache
       // prefix stays byte-identical across a resume (design §3.2). Defensive re-add
-      // only when the restored history lacks a system message (old/corrupt state).
+      // only when the restored history lacks a system message (old/corrupt state) —
+      // PREPENDED so system stays at index 0 (the codebase-wide invariant and what
+      // the Step 2 test asserts; §3.3 ruling by controller).
       this.session.replaceMessages(opts.initialState.messages);
       this.session.restoreLoadedSkills(opts.initialState.loadedSkills);
       if (!opts.initialState.messages.some((m) => m.role === 'system')) {
-        this.session.addMessage({ role: 'system', content: [{ type: 'text', text: buildSystemPrompt() }] });
+        this.session.replaceMessages([
+          { role: 'system', content: [{ type: 'text', text: buildSystemPrompt() }] },
+          ...opts.initialState.messages,
+        ]);
       }
     } else {
       this.session.addMessage({ role: 'system', content: [{ type: 'text', text: buildSystemPrompt() }] });
