@@ -3,6 +3,7 @@ import type { Tool, ToolResult } from '../tools/types.ts';
 import { AiError } from '../ai/errors.ts';
 import type { Session } from '../core/session.ts';
 import type { CoreEvent } from '../core/events.ts';
+import { trimHistory } from './context.ts';
 
 export interface RunAgentParams {
   client: AiClient;
@@ -12,6 +13,8 @@ export interface RunAgentParams {
   cwd: string;
   askPermission: (action: string, target: string) => Promise<boolean>;
   maxIterations?: number;
+  /** History budget in estimated tokens; trimming runs before each iteration. */
+  maxContextTokens?: number;
 }
 
 const DEFAULT_MAX = 100;
@@ -41,6 +44,20 @@ export async function runAgent(params: RunAgentParams): Promise<string> {
   let finalText = '';
 
   for (let i = 0; i < maxIterations; i++) {
+    // Cache-aware history trim (design §4.4): before each model request, drop
+    // oldest whole turns over budget. Emit context_trim only when something changed.
+    if (params.maxContextTokens !== undefined) {
+      const before = session.getMessages();
+      const trimmed = trimHistory(before, { maxTokens: params.maxContextTokens });
+      if (trimmed !== before) {
+        session.replaceMessages(trimmed);
+        session.bus.emit({
+          type: 'context_trim',
+          dropped: before.length - trimmed.length,
+          kept: trimmed.length,
+        });
+      }
+    }
     const events: StreamEvent[] = [];
     for await (const ev of params.client.streamChat({
       messages: session.getMessages(),

@@ -171,3 +171,24 @@ test('messages accumulate in session across consecutive runAgent calls', async (
   });
   assert.equal(sawPrior, true);
 });
+
+test('trims old turns when over budget and emits context_trim', async () => {
+  const seen: string[] = [];
+  const session = makeSession();
+  session.addMessage({ role: 'system', content: [{ type: 'text', text: 'sys' }] });
+  const client: AiClient = {
+    async *streamChat(params) {
+      seen.push(JSON.stringify(params.messages));
+      yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] } };
+    },
+  };
+  const got: string[] = [];
+  session.bus.subscribe((ev) => { if (ev.type === 'context_trim') got.push(`${ev.dropped}/${ev.kept}`); });
+  await runAgent({ client, session, prompt: 'p1', tools: [], ...CTX, maxContextTokens: 10 });
+  await runAgent({ client, session, prompt: 'p2', tools: [], ...CTX, maxContextTokens: 10 });
+  await runAgent({ client, session, prompt: 'p3', tools: [], ...CTX, maxContextTokens: 10 });
+  const last = seen[seen.length - 1];
+  assert.ok(!last.includes('p1'));      // oldest turn trimmed before run 3's request
+  assert.ok(last.includes('p3'));       // newest prompt kept
+  assert.ok(got.length >= 1);           // at least one context_trim emitted
+});
