@@ -108,7 +108,7 @@ web/                                   # 前端（vite + solid-js，仿 anther�
 ```
 { type: 'snapshot',
   messages,           // 当前会话消息（getSessionState().messages）
-  subagents,          // listSubagents()
+  subagents,          // listSubagents() 与 EventHub 事件追踪合并：含 task/status
   running,            // 是否有本轮进行中（事件日志尾部 != done/error）
   log,                // 本轮尚未完成的 CoreEvent 列表（重放）
   pendingPermission } // 挂起的权限请求（若有）
@@ -259,14 +259,16 @@ web/                                   # 前端（vite + solid-js，仿 anther�
 | `POST /api/chat` `{prompt}` | `engine.run(prompt)`；返回 `{status, result}`；运行中 → 409；事件经 ws 推送 |
 | `GET /api/sessions` | `listSessions()`（含 title） |
 | `POST /api/sessions` `{id}` | resume 指定会话；无 body → 新会话（`clearConversation`） |
-| `PUT /api/sessions/:id` `{title}` | `SessionStore.rename` |
-| `DELETE /api/sessions/:id` | `SessionStore.remove` |
-| `GET /api/agents` | `listSubagents()` |
-| `GET /api/agents/:name/messages` | `getSubagentMessages(name)` |
-| `POST /api/agents/:name/close` | `closeSubagent(name)` |
-| `GET /api/config` | `{model, autoApprove, planMode, thinking}` |
+| `PUT /api/sessions/rename` `{id, title}` | `SessionStore.rename` |
+| `POST /api/sessions/delete` `{id}` | `SessionStore.remove` |
+| `GET /api/agents` | `listSubagents()`（含 EventHub 合并的 task/status） |
+| `GET /api/agents/messages?name=` | `getSubagentMessages(name)` |
+| `POST /api/agents/close` `{name}` | `closeSubagent(name)` |
+| `GET /api/config` | `{model, autoApprove, planMode}` |
 | `PUT /api/config` | 切换 `autoApprove` / `planMode` / `model`（`setAutoApprove`/`setPlanMode`/`setModel`） |
 | `GET /api/state` | 完整快照（无 ws 时的页面加载兜底 + 便于测试） |
+
+> 注意：`HttpServer` 沿用 anther 的**精确路径匹配**（无路径参数 `:id`），带 id 的操作一律走 `POST /api/xxx/delete` / `PUT /api/xxx/rename` + body 传 id 的风格（与 anther `POST /api/terminals/close {id}` 一致）。
 
 ### 9.2 HttpServer（仿 anther 复制精简）
 
@@ -293,7 +295,7 @@ daedalus web [--port 3000] [--provider …] [--model …]
 ```
 
 - 新增 `web` 子命令 → `server.ts`；参数与现有 CLI 一致（flags 复用 `parseFlags`，`--port` 为 web 子命令新增选项，`parseFlags` 小扩展）；
-- 默认端口 3000（`DAEDALUS_WEB_PORT` / `--port` 覆盖）；
+- 默认端口 3100（`DAEDALUS_WEB_PORT` / `--port` 覆盖；选 3100 避免与 anther 默认 3000 撞端口，已定案）；
 - 启动日志（仿 anther）：`daedalus web started: http://localhost:3000` + `LAN access: http://<ip>:3000`（`lanIPv4`）；
 - `bin` 入口沿用（`dist/cli/main.js` → 分派 `web` 子命令）。
 
@@ -306,7 +308,7 @@ daedalus web [--port 3000] [--provider …] [--model …]
 | `npm run build` | `tsc` + `vite build`（outDir `dist/web`） |
 | `npm test` | `node --test --experimental-transform-types 'tests/**/*.test.ts' 'web/src/**/*.test.ts'` |
 
-vite dev 代理 `/api`（含 `ws: true`）到后端 3000；`host: true` 供手机访问；`os.networkInterfaces()` 的 EACCES 兜底照抄 anther（受限环境不崩）。
+vite dev 代理 `/api`（含 `ws: true`）到后端 3100；`host: true` 供手机访问；`os.networkInterfaces()` 的 EACCES 兜底照抄 anther（受限环境不崩）。
 
 ### 10.3 共存边界
 
@@ -377,11 +379,11 @@ subagents 面板（宽屏常驻 / 窄屏抽屉）+ 详情页 `#/agent/<name>`（
 
 ## 14. 开放问题
 
-1. **快照重放的粒度**：`log` 事件日志是否要持久化到"本轮失败后刷新"也能重放完整工具调用？倾向只做内存日志（进程活着即可），崩溃场景由会话消息兜底（工具结果已入消息历史）。
-2. **权限卡在 auto 模式下的显示**：auto 模式完全不显示卡片，还是显示"已自动允许"的灰色记录？倾向完全不显示（模式切换按钮即状态表达）。
-3. **工具卡 diff 高亮**：自写简单的统一 diff 行着色，还是引入 diff 库？倾向自写（`unifiedDiff` 输出已有 + 增减行前缀着色，几行代码）。
-4. **`GET /api/sessions` 的 title 降级**：旧会话文件无 title 时，`list()` 是否逐个 `load` 取首条消息？会话数量少（个位数~几十）可接受；数量大再议。
-5. **端口与多实例**：同一台机器同时跑 `daedalus web` 与 anther（都默认 3000）会撞端口；是否默认端口差异化（如 daedalus 用 3100）？倾向 daedalus 默认 3100 并支持 `--port`。
+1. **快照重放的粒度**：`log` 事件日志是否要持久化到"本轮失败后刷新"也能重放完整工具调用？倾向只做内存日志（进程活着即可），崩溃场景由会话消息兜底（工具结果已入消息历史）。**已定案：内存日志。**
+2. **权限卡在 auto 模式下的显示**：auto 模式完全不显示卡片，还是显示"已自动允许"的灰色记录？倾向完全不显示（模式切换按钮即状态表达）。**已定案：不显示。**
+3. **工具卡 diff 高亮**：自写简单的统一 diff 行着色（`unifiedDiff` 输出 + 增减行前缀着色，几行代码），不引入 diff 库。**已定案：自写。**
+4. **`GET /api/sessions` 的 title 降级**：旧会话文件无 title 时，`list()` 是否逐个 `load` 取首条消息？会话数量少（个位数~几十）可接受；数量大再议。**已定案：降级取首条用户消息，空则"未命名会话"。**
+5. **端口与多实例**：daedalus 默认 3100，与 anther（3000）不撞；`--port` / `DAEDALUS_WEB_PORT` 可覆盖。**已定案。**
 
 ## 15. 附录：目标文件结构
 
