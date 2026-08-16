@@ -91,10 +91,7 @@ tests/
 │   ├── permission.test.ts
 │   ├── http.test.ts
 │   └── routes/ (chat/sessions/agents/config)
-└── web/                         # NEW mirrors web/src
-    ├── state-model.test.ts
-    ├── ws.test.ts
-    └── api.test.ts
+└── (web tests colocate at web/src/*.test.ts — anther pattern, no tests/web/)
 ```
 
 ---
@@ -846,6 +843,23 @@ async function connect(hub: WebSocketHub, http: HttpServer): Promise<WebSocket> 
   });
 }
 
+/** 收集 ws 上到达的消息，按 type 等待下一条（消解 open 与首条消息之间的竞态）。 */
+async function nextMessage(ws: WebSocket, type: string, timeoutMs = 1000): Promise<any> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { ws.off('message', onMsg); reject(new Error(\`timeout waiting for \${type}\`)); }, timeoutMs);
+    function onMsg(data: any) {
+      let parsed: any;
+      try { parsed = JSON.parse(data.toString()); } catch { return; }
+      if (parsed?.type === type) {
+        clearTimeout(timer);
+        ws.off('message', onMsg);
+        resolve(parsed);
+      }
+    }
+    ws.on('message', onMsg);
+  });
+}
+
 function fakeEngine() {
   return {
     getSessionState: () => ({ messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }], loadedSkills: [] }),
@@ -859,7 +873,7 @@ test('sends snapshot on connect with current messages + subagents + running', as
   const hub = new WebSocketHub({ engine: fakeEngine() as any, hub: new EventHub(), permission: new WebPermissionManager() });
   hub.attach(http);
   const ws = await connect(hub, http);
-  const msg = JSON.parse(await new Promise((res, rej) => { ws.on('message', (d) => res(d.toString())); ws.on('error', rej); setTimeout(() => rej(new Error('timeout')), 1000); })) as any;
+  const msg = await nextMessage(ws, 'snapshot');
   assert.equal(msg.type, 'snapshot');
   assert.equal(msg.messages.length, 1);
   assert.equal(msg.running, false);
@@ -872,10 +886,9 @@ test('broadcasts engine events as event messages to clients', async () => {
   const hub = new WebSocketHub({ engine: fakeEngine() as any, hub: new EventHub(), permission: new WebPermissionManager() });
   hub.attach(http);
   const ws = await connect(hub, http);
-  // consume snapshot
-  await new Promise((res) => ws.on('message', res));
+  await nextMessage(ws, 'snapshot');
   hub.broadcastEvent({ type: 'text_delta', text: 'hello' });
-  const msg = JSON.parse(await new Promise((res, rej) => { ws.on('message', (d) => res(d.toString())); setTimeout(() => rej(new Error('timeout')), 1000); })) as any;
+  const msg = await nextMessage(ws, 'event');
   assert.equal(msg.type, 'event');
   assert.equal(msg.ev.text, 'hello');
   ws.close();
@@ -888,12 +901,10 @@ test('replays in-flight log events after snapshot', async () => {
   hub.broadcastEvent({ type: 'tool_call_start', id: '1', name: 'bash' }); // mark in-flight log before any client
   hub.attach(http);
   const ws = await connect(hub, http);
-  const first = JSON.parse(await new Promise((res) => ws.on('message', res))) as any;
-  assert.equal(first.type, 'snapshot');
+  const first = await nextMessage(ws, 'snapshot');
   assert.equal(first.running, true);
   assert.equal(first.log.length, 1);
-  const replayed = JSON.parse(await new Promise((res) => ws.on('message', res))) as any;
-  assert.equal(replayed.type, 'event');
+  const replayed = await nextMessage(ws, 'event');
   assert.equal(replayed.ev.name, 'bash');
   ws.close();
   await http.close();
