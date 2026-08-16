@@ -340,13 +340,15 @@ vite dev 代理 `/api`（含 `ws: true`）到后端 3000；`host: true` 供手�
 | `vite ^6.4.3`（devDep） | 前端构建/开发服务器 |
 | `vite-plugin-solid ^2.11.14`（devDep） | solid-js vite 插件 |
 
-未使用（**初始不引入，待确认**）：
+未使用（**已确认不引入**，2026-08-16 用户拍板）：
 
 | 依赖 | 为何不用 |
 |---|---|
 | `@codemirror/*` + `codemirror` | 浏览器内代码编辑——本设计不做编辑器（工具卡片 `<pre>` + diff 高亮足矣） |
 | `@xterm/xterm` + `@xterm/addon-fit` | 终端仿真——明确不做"网页套终端" |
 | `typescript-language-server` + `vscode-languageserver-protocol` | LSP——依赖编辑能力，同上 |
+
+后续若做文件查看/编辑（如集成 anther 时），再按需引入 codemirror 与 LSP。
 
 （`@anthropic-ai/tokenizer` 是 Daedalus 现有依赖，与 anther 无关。）
 
