@@ -1,5 +1,5 @@
-import { createSignal, For, Show } from 'solid-js';
-import { state, handleEnvelope } from './stores.ts';
+import { createSignal, createEffect, For, Show } from 'solid-js';
+import { state, handleEnvelope, setAutoApproveLocal } from './stores.ts';
 import { chat, putConfig, getConfig } from './api.ts';
 import { connectWs, sendWsMessage, type WsStatus } from './ws.ts';
 import { parseHash, onHashChange, type Route } from './routes.ts';
@@ -26,15 +26,15 @@ export function App() {
     onEnvelope: handleEnvelope,
     onStatus: setWsStatus,
   });
-  void getConfig().then((c) => { /* config 信号挂到 store —— Task 10 细化 */ });
+  createEffect(() => { void getConfig().then((c) => setAutoApproveLocal(c.autoApprove)).catch(() => {}); });
 
   const onSend = async (prompt: string) => {
     await chat(prompt); // 结果通过 ws 事件回流
   };
   const onToggleAuto = async () => {
     const next = !state().autoApprove;
-    await putConfig({ autoApprove: next });
-    // config 状态经 ws 不回传，简单起见本地更新（Task 10 用 snapshot/config 统一）
+    setAutoApproveLocal(next);
+    await putConfig({ autoApprove: next }).catch(() => {});
   };
 
   return (
@@ -58,6 +58,7 @@ export function App() {
           <Badge status={state().running ? 'running' : 'done'} />
           <span class={`ws-dot ${wsStatus()}`} />
         </header>
+        <Show when={wsStatus() !== 'open'}><div class="reconnect-banner">连接断开，重连中…</div></Show>
         <div class="main">
           <div class="chat-stream">
             <For each={state().messages}>

@@ -128,25 +128,39 @@ Once started you land in the REPL prompt (`›`):
 | `/skills` | List installed skills |
 | `/sessions` | List saved sessions (newest first) |
 | `/resume [id]` | Continue a saved session in place (no id = the latest) |
+| `/cost` | Print this session's cumulative token usage |
+| `/undo` | Restore the most recent file edit/write (in-memory, per-session) |
+| `/clear` | Drop the conversation history (system prompt kept) |
+| `/compact` | Manually summarize the oldest turns to fit the context budget |
+| `/model [name]` | Show or set the session's model override |
+| `/init` | Create `<cwd>/DAEDALUS.md` (never overwrites an existing one) |
+| `/permissions [auto\|ask]` | Show or toggle auto-approve for this session |
+| `/plan` | Read-only mode: write/edit disabled everywhere (even for subagents); a run exits it |
 | `/<skill-name>` | Load a skill (e.g. `/review`) into the current session |
 
 Any other input is a prompt for the agent — a prompt submits on the first Enter. For multi-line input, press **Ctrl+Enter** (or, on terminals that distinguish it, **Shift+Enter**) to continue the prompt onto the next line, or end a line with `\` to do the same; then submit with `/run` (or an empty line). The agent runs, streams its response and tool calls, executes tools (asking `y/n` before shell commands unless auto-approve is on), and reports the result.
 
+### TUI
+
+On a TTY the REPL runs as a full-screen TUI (Claude Code-style): a statusline on top (model, context usage, plan/auto badges, a `▼ n` scroll-back indicator), the scrollable conversation in the middle, and a multi-line input editor at the bottom. **Ctrl+Enter**/**Shift+Enter** insert a real newline, so the prompt wraps and grows to several rows; **↑/↓** move the caret across wrapped rows (and recall history only at the buffer's top/bottom), **Ctrl+R** reverse-searches history, **Tab** completes `/` commands, **PgUp/PgDn** or the mouse wheel scroll back (the scroll indicator shows how far), **Ctrl+L** redraws, **F1** or `?` on an empty prompt opens the keymap overlay, and tool calls render as cards (unified diffs for edit/write). Streaming updates only the current line, so the screen stays stable while the agent works.
+
+The TUI needs no dependencies — it is hand-rolled ANSI escape sequences on raw mode: a custom key decoder, a double-buffered diff-painted grid, synchronized-output (`?2026`) frame rendering throttled to ~30fps, and bracketed paste. Mouse tracking is skipped on Termux so tapping still pops the soft keyboard. Fall back to the old line-based REPL with `daedalus --no-tui` (or `DAEDALUS_TUI=0`); pipes and `-p` single-shot mode never use the TUI.
+
 ## Tools
 
-Seven built-in tools are registered (see `src/tools/registry.ts`); the engine adds the `Skill` tool (see [Skills](#skills)) and the `delegate` tool (see [Multi-agent](#multi-agent)):
+Seven built-in tools are registered (see `src/tools/registry.ts`); the engine adds the `Skill` tool (see [Skills](#skills)) and the `delegate` tool (see [Multi-agent](#multi-agent)). By default the main agent calls `read`/`write`/`edit`/`Skill`/`delegate` directly, while `bash`/`ls`/`grep`/`glob` are delegated tools — available only to subagents, which keeps exploration and command output out of the main context:
 
-| Tool | Description |
-|---|---|
-| `bash` | Execute a shell command and return its output. Asks permission first (auto-approved in `--auto` mode); 2-minute timeout. |
-| `read` | Read a file, optionally with a line `offset`/`limit`. Refuses to read files over 1 MB whole (pass `offset`/`limit` instead); partial reads are line-numbered. |
-| `write` | Write content to a file. Asks permission before overwriting an existing file (auto-approved in `--auto` mode); creates parent directories automatically. |
-| `edit` | Replace an exact string in a file. Errors if the string is not found or matches more than once. |
-| `ls` | List directory contents; skips `node_modules` and `.git`. |
-| `grep` | Recursively search file contents for a regex pattern; skips `node_modules` and `.git`. |
-| `glob` | Find files matching a glob pattern (`*`, `**`, `?`); skips `node_modules` and `.git`. |
-| `Skill` | Load a skill by name; the skill body arrives as the tool result. Provided by the engine; see Skills. |
-| `delegate` | Run a self-contained task in a separate subagent with its own isolated context; returns only the subagent's final report. Provided by the engine; see Multi-agent. |
+| Tool | Description | Used by |
+|---|---|---|
+| `bash` | Execute a shell command and return its output. Asks permission first (auto-approved in `--auto` mode); 2-minute timeout. | subagent (via `delegate`) |
+| `read` | Read a file, optionally with a line `offset`/`limit`. Refuses to read files over 1 MB whole (pass `offset`/`limit` instead); partial reads are line-numbered. | main agent + subagent |
+| `write` | Write content to a file. Asks permission before overwriting an existing file (auto-approved in `--auto` mode); creates parent directories automatically. | main agent + subagent |
+| `edit` | Replace an exact string in a file. Errors if the string is not found or matches more than once. | main agent + subagent |
+| `ls` | List directory contents; skips `node_modules` and `.git`. | subagent (via `delegate`) |
+| `grep` | Recursively search file contents for a regex pattern; skips `node_modules` and `.git`. | subagent (via `delegate`) |
+| `glob` | Find files matching a glob pattern (`*`, `**`, `?`); skips `node_modules` and `.git`. | subagent (via `delegate`) |
+| `Skill` | Load a skill by name; the skill body arrives as the tool result. Provided by the engine; see Skills. | main agent |
+| `delegate` | Run a self-contained task in a separate subagent with its own isolated context; returns only the subagent's final report. Provided by the engine; see Multi-agent. | main agent |
 
 ## Skills
 
@@ -174,26 +188,35 @@ The model can load a skill through the `Skill` tool: it picks a name from the to
 
 ## Multi-agent
 
-Daedalus implements an orchestrator/worker pattern: the main agent can hand a large or self-contained task to a **subagent** via the `delegate` tool, instead of doing it inline.
+Daedalus implements an orchestrator/worker pattern: the main agent can hand a large or self-contained task to a **subagent** via the `delegate` tool, or fan out several independent tasks to parallel subagents with `delegateMany`, instead of doing them inline.
+
+**Tool layering by default.** The main agent is deliberately *not* given the full toolset — it holds the author's loop (`read`, `write`, `edit`, `Skill`) plus `delegate` and `delegateMany`. `bash`, `ls`, `grep`, and `glob` exist **only** in the subagent's toolset, so exploration, search, and command execution are forced through subagents: the main agent plans and edits, subagents explore and execute. The system prompt spells this out ("you are the author, subagents do the exploration") and tells the model that reaching for a delegated tool is the signal to delegate. To restore self-service exploration, construct the engine with `mainAgentTools` set to the full list (see `src/core/engine.ts`).
 
 ```jsonc
 {
   "task": "Add unit tests for the glob matcher to tests/tools/glob.test.ts",
   "context": "The matcher lives in src/tools/glob.ts. Follow the existing test style in tests/tools/*.test.ts.",
   "tools": ["read", "grep", "write", "bash"], // optional restriction, default: all built-in
-  "maxIterations": 30 // optional cap
+  "maxIterations": 30, // optional cap on subagent tool-call iterations
+  "maxResultChars": 20000, // optional cap on the returned report (default 20000)
+  "agent": "glob-tests", // optional named identity: continues this subagent's history across calls
+  "json": true, // optional: ask for the report as a single valid JSON value
+  "retries": 1 // optional: retry the whole run this many times after a failure
 }
 ```
 
+`delegateMany` takes a `tasks` array of the same shape plus a `maxConcurrent` cap (default 3), and merges the per-subagent reports into one result. It degrades gracefully: a failed lane is marked `(failed)` in the merged report and the call errors only when *every* lane fails — partial results are still returned.
+
 Design properties:
 
-- **Context isolation.** The subagent gets a brand-new session — its own system prompt and your task/context text. It cannot see the main conversation, and its tool calls and intermediate steps never enter the main session. Only its final report returns, as one `tool_result` to the main agent. This is what keeps the main context clean on long jobs.
-- **No recursion.** The subagent is given only the built-in tools; `delegate` itself is never in its toolset, so delegation is exactly one level deep.
-- **Independent budget.** The subagent's history is trimmed against its own `maxContextTokens`, untouched by trims in the main session.
-- **Failure is a tool error.** If the subagent fails (provider error, iteration cap), the `delegate` call returns an error result the main agent can see and adapt to — it does not crash the main turn.
+- **Context isolation.** Each subagent gets its own session — its own system prompt and your task/context text. It cannot see the main conversation, and its tool calls and intermediate steps never enter the main session. Only its final report returns, as one `tool_result` to the main agent. This is what keeps the main context clean on long jobs.
+- **Depth cap, not tool absence.** By default a subagent is given only the built-in tools and cannot delegate further. With `delegateMaxDepth: 2` on the engine, a subagent may spawn its own subagents (which then cannot), and so on — the configured depth cap is the recursion guard.
+- **Working memory (optional).** With the engine's session pool, passing the same `agent` name across `delegate` calls continues that subagent's previous history, so a long investigation can pick up where it left off instead of starting cold each time.
+- **Independent budget.** Each subagent's history is trimmed against its own `maxContextTokens`, untouched by trims in the main session.
+- **Failure is a tool error.** If a subagent fails (provider error, iteration cap), the call returns an error result the main agent can see and adapt to — it does not crash the main turn. Optional `retries` re-runs a failed subagent before degrading. Ctrl+C interrupts propagate to subagents and are treated as interrupts, not as failures.
 - **Same permission gate.** Subagent `bash`/`write` calls go through the same `y/n` permission prompt as the main agent (or auto-approve in `--auto` mode).
 
-Reports longer than 20,000 characters are truncated (configurable per call via `maxResultChars`).
+Reports longer than 20,000 characters are truncated (configurable per call via `maxResultChars`). Subagent progress (task start, tool calls, text) is forwarded onto the main session's event bus for the REPL UI and `/cost` accounting — it never enters the main conversation.
 
 ## Sessions & context
 
@@ -254,3 +277,17 @@ Project conventions (see the plan in `.superpowers/sdd/`):
 - Tests use `node:test`, zero test dependencies.
 
 Daedalus also exposes a small library API from `src/index.ts` (`createAiClient`, `runAgent`, `tools`, `loadConfig`, `AiError`, and the IR types) for embedding in other tools.
+
+## Web UI
+
+`daedalus web [--port 3100]` starts a standalone web UI (mobile-first, desktop-parity).
+
+- Open http://localhost:3100 (or the printed LAN URL) in a browser.
+- Main chat with streaming, thinking, tool cards, inline permission cards (ask ↔ auto toggle).
+- Subagents panel (drawer on narrow screens) → click an agent for its detail view.
+- `#/sessions` for session management (continue / rename / delete / new).
+- Sessions share `~/.daedalus/sessions` with the CLI/TUI — they interoperate.
+
+The web UI is the primary interface going forward; the terminal TUI/REPL are
+retained for now and will be removed once the web UI matures.
+

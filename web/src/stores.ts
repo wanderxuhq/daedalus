@@ -12,3 +12,8 @@ export function handleEnvelope(env: EventEnvelope): void {
   }
   setState((s) => applyEnvelope(s, env));
 }
+
+/** 本地乐观更新 autoApprove（config 不经 ws 回传）。 */
+export function setAutoApproveLocal(v: boolean): void {
+  setState((s) => ({ ...s, autoApprove: v }));
+}
