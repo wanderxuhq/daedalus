@@ -11,6 +11,7 @@ import { Badge } from './components/common/badge.tsx';
 import { SubagentPanel } from './components/agents/panel.tsx';
 import { AgentDetail } from './components/agents/detail.tsx';
 import { Drawer } from './components/common/drawer.tsx';
+import { SessionList } from './components/sessions/list.tsx';
 
 export function App() {
   const isNarrow = useIsNarrow();
@@ -46,7 +47,7 @@ export function App() {
           const r = route();
           return r.route === 'agent'
             ? <AgentDetail name={r.name} />
-            : <div class="session-list-placeholder">sessions — Task 11</div>;
+            : <SessionList />;
         })()
       }
     >
