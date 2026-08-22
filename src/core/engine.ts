@@ -129,7 +129,12 @@ export class DaedalusEngine {
     const loaded = await this.sessionStore.load(target.id);
     this.restoreState({ messages: loaded.messages, loadedSkills: loaded.loadedSkills });
     this.sessionId = loaded.id; // continue writing to the resumed session's file
-    return { id: loaded.id, updatedAt: loaded.updatedAt, messageCount: loaded.messages.length };
+    return {
+      id: loaded.id,
+      updatedAt: loaded.updatedAt,
+      title: loaded.title ?? '未命名会话',
+      messageCount: loaded.messages.length,
+    };
   }
 
   /**

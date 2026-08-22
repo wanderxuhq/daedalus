@@ -6,6 +6,7 @@ import type { SessionState } from './session.ts';
 export interface SessionMeta {
   id: string;
   updatedAt: string;
+  title: string;
   messageCount: number;
 }
 
@@ -14,6 +15,21 @@ export interface StoredSession extends SessionState {
   createdAt: string;
   updatedAt: string;
   cwd?: string;
+  title?: string;
+}
+
+/** Title = first non-empty user text block, whitespace-collapsed, ≤80 chars ending with `…`. */
+function titleFromMessages(messages: SessionState['messages']): string | undefined {
+  for (const m of messages) {
+    if (m.role !== 'user') continue;
+    for (const c of m.content) {
+      if (c.type === 'text' && c.text.trim()) {
+        const t = c.text.trim().replace(/\s+/g, ' ');
+        return t.length > 80 ? `${t.slice(0, 79)}…` : t;
+      }
+    }
+  }
+  return undefined;
 }
 
 function defaultDir(): string {
@@ -28,7 +44,8 @@ function makeId(now = new Date()): string {
 
 /** File-backed session storage: one JSON file per session in `~/.daedalus/sessions`. */
 export class SessionStore {
-  private dir: string;
+  /** The directory session files live in (public so user-facing errors can point at it). */
+  readonly dir: string;
 
   constructor(dir?: string) {
     this.dir = dir ?? defaultDir();
@@ -64,6 +81,7 @@ export class SessionStore {
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
       cwd: meta.cwd ?? existing?.cwd,
+      title: existing?.title ?? titleFromMessages(state.messages),
       messages: state.messages,
       loadedSkills: state.loadedSkills,
     };
@@ -111,6 +129,10 @@ export class SessionStore {
         metas.push({
           id,
           updatedAt: p.updatedAt ?? '',
+          title:
+            (typeof p.title === 'string' && p.title) ||
+            titleFromMessages(Array.isArray(p.messages) ? p.messages : []) ||
+            '未命名会话',
           messageCount: Array.isArray(p.messages) ? p.messages.length : 0,
         });
       } catch {
@@ -128,5 +150,14 @@ export class SessionStore {
 
   async remove(id: string): Promise<void> {
     await rm(this.file(id), { force: true });
+  }
+
+  /** Rename a stored session; throws on a missing/corrupt file. */
+  async rename(id: string, title: string): Promise<void> {
+    const existing = await this.load(id);
+    existing.title = title;
+    const tmp = this.file(`${id}.tmp`);
+    await writeFile(tmp, JSON.stringify(existing, null, 2));
+    await rename(tmp, this.file(id));
   }
 }

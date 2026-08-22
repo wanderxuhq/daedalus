@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, existsSync, mkdtempSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { SessionStore } from '../../src/core/session-store.ts';
@@ -106,4 +106,53 @@ test('save rejects when the existing file is corrupt instead of silently overwri
   const { store, dir } = tmpStore();
   writeFileSync(join(dir, 'corrupt.json'), '{nope');
   await assert.rejects(() => store.save(state, { id: 'corrupt' }), /Corrupt/);
+});
+
+// — title/rename tests (append to existing file) —
+
+test('save() derives a title from the first user message', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dae-ss-title-'));
+  const store = new SessionStore(dir);
+  const id = await store.save({ messages: [
+    { role: 'user', content: [{ type: 'text', text: 'Refactor the parser to async' }] },
+  ], loadedSkills: [] });
+  assert.ok(id.length > 0);
+  const meta = (await store.list())[0];
+  assert.equal(meta.title, 'Refactor the parser to async');
+});
+
+test('save() truncates long titles to 80 chars with ellipsis', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dae-ss-trunc-'));
+  const store = new SessionStore(dir);
+  const long = 'x'.repeat(100);
+  await store.save({ messages: [{ role: 'user', content: [{ type: 'text', text: long }] }], loadedSkills: [] });
+  const meta = (await store.list())[0];
+  assert.equal(meta.title, 'x'.repeat(79) + '…');
+});
+
+test('save() keeps an existing title across saves', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dae-ss-keep-'));
+  const store = new SessionStore(dir);
+  const id = await store.save({ messages: [{ role: 'user', content: [{ type: 'text', text: 'first' }] }], loadedSkills: [] });
+  await store.save({ messages: [
+    { role: 'user', content: [{ type: 'text', text: 'second message' }] },
+  ], loadedSkills: [] }, { id });
+  const meta = (await store.list())[0];
+  assert.equal(meta.title, 'first');
+});
+
+test('rename() rewrites the stored title', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dae-ss-ren-'));
+  const store = new SessionStore(dir);
+  const id = await store.save({ messages: [{ role: 'user', content: [{ type: 'text', text: 'first' }] }], loadedSkills: [] });
+  await store.rename(id, 'Renamed');
+  const raw = JSON.parse(readFileSync(join(dir, `${id}.json`), 'utf8'));
+  assert.equal(raw.title, 'Renamed');
+  assert.equal((await store.list())[0].title, 'Renamed');
+});
+
+test('rename() throws on a missing session', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'dae-ss-renx-'));
+  const store = new SessionStore(dir);
+  await assert.rejects(() => store.rename('does-not-exist', 'x'), /Session not found/);
 });
