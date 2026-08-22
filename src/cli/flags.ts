@@ -13,6 +13,7 @@ export function parseFlags(argv: string[]): Record<string, string> {
       const next = argv[i + 1];
       flags.resume = next && !next.startsWith('-') ? argv[++i] : '1';
     }
+    else if (a === '--port') flags.port = argv[++i];
     else if (a === '--help') flags.help = '1';
     else if (a === '--auto') flags.auto = '1';
   }

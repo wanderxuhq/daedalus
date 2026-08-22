@@ -10,11 +10,24 @@ import { runRepl } from './repl.ts';
 import { runSetupWizard } from './setup.ts';
 import { ANSI, renderEvent } from './render.ts';
 import { parseFlags } from './flags.ts';
+import { main as webMain } from '../server/server.ts';
 
 const flags = parseFlags(process.argv.slice(2));
 if (flags.help) {
   console.log('daedalus — a terminal agent\n\nUsage: daedalus [--provider openai|anthropic] [--model M] [--base-url URL] [--resume [id]] [--auto]\n\n--auto auto-approves tool permissions (bash/write run without y/n prompts).\nExtended thinking is ON by default; disable with DAEDALUS_THINKING=0 or "thinking": false in config.\n\nConfig: ~/.daedalus/config.json and DAEDALUS_* env vars. First run starts an interactive setup.');
   process.exit(0);
+}
+
+const [cmd, ...rest] = process.argv.slice(2);
+if (cmd === 'web') {
+  // main() 在 listen 成功后即 resolve（服务存活由 server handle 维持；SIGTERM/SIGINT 在
+  // main 内部自行退出）。这里绝不能 process.exit —— 否则会把刚起好的服务当场杀掉。
+  try {
+    await webMain(rest);
+  } catch (e) {
+    console.error((e as Error).message ?? e);
+    process.exit(1);
+  }
 }
 
 let base: DaedalusConfig;
