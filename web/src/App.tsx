@@ -2,7 +2,7 @@ import { createSignal, createEffect, For, Show } from 'solid-js';
 import { state, handleEnvelope, setAutoApproveLocal, submitPrompt, removeLastUserMessage } from './stores.ts';
 import { AiError } from '../../src/ai/errors.ts';
 import { chat, resumeSession, putConfig, getConfig } from './api.ts';
-import { connectWs, sendWsMessage, type WsStatus } from './ws.ts';
+import { connectWs, sendWsMessage, requestReconnect, type WsStatus } from './ws.ts';
 import { parseHash, onHashChange, type Route } from './routes.ts';
 import { useIsNarrow } from './use-is-narrow.ts';
 import { ChatInput } from './components/chat/input.tsx';
@@ -51,7 +51,8 @@ export function App() {
   const onResumeSession = async (id: string) => {
     try {
       await resumeSession(id);
-      // WebSocket 连接会自动收到 snapshot 更新
+      // 服务端 resume 后不会主动推送 snapshot，需要断开 WS 触发重连以拉取最新状态
+      requestReconnect();
     } catch (e) {
       // 恢复失败时不做额外处理，用户可以重试
     }

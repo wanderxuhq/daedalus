@@ -1,5 +1,6 @@
 import { createEffect, createSignal, For, Show } from 'solid-js';
 import { listSessions, renameSession, deleteSession } from '../../api.ts';
+import { requestReconnect } from '../../ws.ts';
 import { t } from '../../i18n.ts';
 
 interface SessionRow { id: string; title: string; updatedAt: string; messageCount: number }
@@ -15,10 +16,18 @@ export function SessionList() {
   createEffect(refresh);
 
   const resume = (id: string) => {
-    void fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).then(() => { location.hash = '#/'; });
+    void fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id }) }).then(() => {
+      // 服务端 resume 后不会主动推送 snapshot，断开 WS 触发重连以拉取最新状态
+      requestReconnect();
+      location.hash = '#/';
+    });
   };
   const newSession = () => {
-    void fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(() => { location.hash = '#/'; });
+    void fetch('/api/sessions', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' }).then(() => {
+      // 服务端 clearConversation 后不会主动推送 snapshot，断开 WS 触发重连以拉取最新状态
+      requestReconnect();
+      location.hash = '#/';
+    });
   };
   const doRename = async (id: string) => {
     const val = draft().trim();
