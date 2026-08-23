@@ -83,6 +83,7 @@ export class WebSocketHub {
       this.log = [];
       this.permission.clearAll();
     } else {
+      // turn_done is a non-terminal event: message lands in UI, but engine keeps running
       this.log.push(ev);
     }
     for (const c of this.clients) this.sendEvent(c, ev);

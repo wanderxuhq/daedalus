@@ -14,6 +14,7 @@ export type CoreEvent =
   | { type: 'delegate_start'; agent?: string; task: string }
   | { type: 'context_trim'; dropped: number; kept: number; agent?: string }
   | { type: 'context_compact'; dropped: number; kept: number; agent?: string }
+  | { type: 'turn_done'; message: Message; agent?: string }
   | { type: 'done'; message: Message; agent?: string }
   | { type: 'error'; error: AiError; agent?: string };
 

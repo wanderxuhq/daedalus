@@ -19,12 +19,12 @@ test('text_delta streams accumulate into the last message', () => {
   assert.equal(s.running, true);
 });
 
-test('tool_call_start creates a running card; tool_result marks done', () => {
+test('tool_call_start creates a running card; tool_result does not stop running', () => {
   let s = initialUiState();
   s = applyEnvelope(s, ev('tool_call_start', { id: 't1', name: 'bash' }));
   assert.equal(s.log[0].type, 'tool_call_start');
   s = applyEnvelope(s, ev('tool_result', { id: 't1', name: 'bash', input: {}, content: 'out' }));
-  assert.equal(s.running, false); // done would follow in real flow; tool_result alone doesn't end
+  assert.equal(s.running, true); // tool_result is not terminal; running continues until done/error
 });
 
 test('done clears the in-flight log and stops running', () => {
@@ -33,6 +33,19 @@ test('done clears the in-flight log and stops running', () => {
   s = applyEnvelope(s, ev('done', { message: { role: 'assistant', content: [] } }));
   assert.equal(s.running, false);
   assert.deepEqual(s.log, []);
+});
+
+test('turn_done adds message to messages but keeps running', () => {
+  let s = initialUiState();
+  s = applyEnvelope(s, ev('text_delta', { text: 'thinking...' }));
+  s = applyEnvelope(s, ev('tool_call_start', { id: 't1', name: 'bash' }));
+  // turn_done with tool_call content: message lands, but log/running stay
+  const turnDoneEv = { type: 'turn_done', message: { role: 'assistant', content: [{ type: 'text', text: 'let me check' }, { type: 'tool_call', id: 't1', name: 'bash', input: {} }] } };
+  s = applyEnvelope(s, { type: 'event', ev: turnDoneEv as unknown as CoreEvent });
+  assert.equal(s.messages.length, 1);
+  assert.equal((s.messages[0] as any).role, 'assistant');
+  assert.equal(s.running, true);
+  assert.ok(s.log.length > 0);
 });
 
 test('main-session turns render as messages: user prompt on submit, assistant on done', () => {

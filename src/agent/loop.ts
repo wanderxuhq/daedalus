@@ -135,6 +135,7 @@ export async function runAgent(params: RunAgentParams): Promise<string> {
         }
       }
       const events: StreamEvent[] = [];
+      let pendingDone: StreamEvent | undefined;
       for await (const ev of params.client.streamChat({
         messages: session.getMessages(),
         tools: toolDefs,
@@ -143,10 +144,24 @@ export async function runAgent(params: RunAgentParams): Promise<string> {
         ...(params.model !== undefined ? { model: params.model } : {}),
         ...(params.signal ? { signal: params.signal } : {}),
       })) {
-        session.bus.emit(toCoreEvent(ev));
+        if (ev.type === 'done') {
+          // Buffer done event - emit as turn_done or done after we know if there are tool calls
+          pendingDone = ev;
+        } else {
+          session.bus.emit(toCoreEvent(ev));
+        }
         events.push(ev);
         if (ev.type === 'error') throw ev.error;
-        if (ev.type === 'done' && hasPersistableContent(ev.message)) session.addMessage(ev.message);
+      }
+      // Emit the buffered done event as either turn_done (if tool calls follow) or done (final)
+      if (pendingDone?.type === 'done') {
+        const calls = pendingDone.message.content.filter((c) => c.type === 'tool_call');
+        if (calls.length > 0) {
+          session.bus.emit({ type: 'turn_done', message: pendingDone.message });
+        } else {
+          session.bus.emit(toCoreEvent(pendingDone));
+        }
+        if (hasPersistableContent(pendingDone.message)) session.addMessage(pendingDone.message);
       }
       // Equivalent of events.findLast(...): scan backwards for the terminal 'done'.
       // findLast is an ES2023 method and this project's tsconfig targets ES2022.

@@ -132,17 +132,15 @@ export function applyEnvelope(state: UiState, env: EventEnvelope): UiState {
   if (ev.agent === undefined) {
     // main-session events: accumulate into the in-flight log
     const log = TERMINALS.has(ev.type) ? [] : [...state.log, ev];
-    // 偏差（constraint > snippet）：plan 片段用 `log.length > 0`，但其测试要求
-    // tool_result 落地后 running 为 false —— 故最新事件为已结算的 tool_result 时视为空闲。
-    const running = log.length > 0 && ev.type !== 'tool_result';
+    const running = log.length > 0;
     // 渲染断层修复：messages 只在 snapshot 时更新过，实时轮次从不上屏。
     // done 携带最终 assistant 消息 → 落进渲染列表；error → 横幅字段。
     let messages = state.messages;
     let error = state.error;
     let streamingMessage = state.streamingMessage;
-    if (ev.type === 'done' && ev.message.role === 'assistant') {
+    if ((ev.type === 'done' || ev.type === 'turn_done') && ev.message.role === 'assistant') {
       messages = [...state.messages, ev.message];
-      streamingMessage = null; // done 事件后清空流式消息
+      streamingMessage = null; // done/turn_done 事件后清空流式消息
     } else if (ev.type === 'error') {
       error = ev.error.message;
       streamingMessage = null; // 错误后清空流式消息
@@ -158,7 +156,7 @@ export function applyEnvelope(state: UiState, env: EventEnvelope): UiState {
   // 也要累积实时事件到 subagentMessages。
   let subagentMessages = state.subagentMessages;
   if (state.viewingSubagent === ev.agent) {
-    if (ev.type === 'done' && ev.message.role === 'assistant') {
+    if ((ev.type === 'done' || ev.type === 'turn_done') && ev.message.role === 'assistant') {
       subagentMessages = [...subagentMessages, ev.message];
     } else if (ev.type !== 'done' && ev.type !== 'error') {
       subagentMessages = [...subagentMessages, ev];

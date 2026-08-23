@@ -237,6 +237,7 @@ export function renderEvent(ev: CoreEvent): void {
     }
     case 'context_compact': flushThinking(); process.stdout.write(`\n${agentTag(ev.agent)}${renderText(`— context compacted: ${ev.dropped} messages summarized —`, 'dim')}\n`); break;
     case 'context_trim': flushThinking(); process.stdout.write(`\n${agentTag(ev.agent)}${renderText(`— context trimmed: ${ev.kept} messages kept —`, 'dim')}\n`); break;
+    case 'turn_done': flushThinking(); process.stdout.write('\n'); break;
     case 'done': flushThinking(); process.stdout.write('\n'); break;
     case 'error': flushThinking(); process.stdout.write(`\n${agentTag(ev.agent)}${renderText(`[error] ${ev.error.message}`, 'red')}\n`); break;
     case 'session_start': break;
