@@ -52,6 +52,9 @@ export function App() {
       // 恢复失败时不做额外处理，用户可以重试
     }
   };
+  const navigateToAgent = (name: string) => {
+    location.hash = `#/agent/${encodeURIComponent(name)}`;
+  };
 
   return (
     <Show
@@ -87,11 +90,11 @@ export function App() {
               <PermissionCard pending={state().pendingPermission} send={(m) => sendWsMessage(m)} />
             </Show>
           </div>
-          {!isNarrow() && <SubagentPanel subagents={state().subagents} />}
+          {!isNarrow() && <SubagentPanel subagents={state().subagents} onView={navigateToAgent} />}
         </div>
         {isNarrow() && (
           <Drawer open={drawerOpen()} onClose={() => setDrawerOpen(false)}>
-            <SubagentPanel subagents={state().subagents} />
+            <SubagentPanel subagents={state().subagents} onView={navigateToAgent} />
           </Drawer>
         )}
         <ChatInput disabled={state().running} autoApprove={state().autoApprove} onSend={onSend} onToggleAuto={onToggleAuto} onResumeSession={onResumeSession} />
