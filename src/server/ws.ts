@@ -88,4 +88,18 @@ export class WebSocketHub {
     }
     for (const c of this.clients) this.sendEvent(c, ev);
   }
+
+  /**
+   * 向所有已连接客户端推送最新 snapshot。
+   * 用于服务端状态变更后（resume / clearConversation / closeSubagent）主动同步 UI。
+   */
+  broadcastSnapshot(): void {
+    const raw = JSON.stringify({ type: 'snapshot', ...this.snapshot() });
+    for (const c of this.clients) if (c.readyState === c.OPEN) c.send(raw);
+  }
+
+  /** 重置 EventHub（会话切换时清除残留的子代理条目）。 */
+  resetHub(): void {
+    this.hub.reset();
+  }
 }

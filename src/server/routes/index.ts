@@ -15,7 +15,7 @@ export interface RouteDeps {
 
 export function registerAll(http: HttpServer, deps: RouteDeps): void {
   registerChatRoutes(http, deps.engine, deps.hub);
-  registerSessionRoutes(http, deps.engine, deps.store);
-  registerAgentRoutes(http, deps.engine);
+  registerSessionRoutes(http, deps.engine, deps.store, deps.hub);
+  registerAgentRoutes(http, deps.engine, deps.hub);
   registerConfigRoutes(http, deps.engine);
 }
