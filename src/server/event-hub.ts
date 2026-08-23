@@ -8,7 +8,7 @@ export interface SubagentTracked {
   loadedSkills: string[];
 }
 
-/** 跟踪 subagent 活动（名字/当前任务/运行状态），供 ws 快照与 /api/agents 消费。 */
+/** Tracks subagent activity (name / current task / run status) for ws snapshots and /api/agents. */
 export class EventHub {
   private byName = new Map<string, SubagentTracked>();
   private order: string[] = [];
@@ -35,7 +35,7 @@ export class EventHub {
     }
   }
 
-  /** 按首次出现顺序返回当前全部 agent（含 running/done/error 状态）。 */
+  /** Return all agents in first-seen order (including running/done/error status). */
   list(): SubagentTracked[] {
     return this.order.map((name) => this.byName.get(name)!);
   }

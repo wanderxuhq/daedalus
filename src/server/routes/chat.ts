@@ -3,11 +3,11 @@ import { HttpError } from '../http-error.ts';
 import type { DaedalusEngine } from '../../core/engine.ts';
 import type { WebSocketHub } from '../ws.ts';
 
-/** POST /api/chat — 一次一轮 engine.run；事件经 ws 推给浏览器。运行中拒绝（409）。 */
+/** POST /api/chat — one engine.run per request; events pushed to browser via ws. Rejects (409) while running. */
 export function registerChatRoutes(http: HttpServer, engine: DaedalusEngine, hub: WebSocketHub): void {
-  // 与 brief 的偏差：brief 的代码片段没有并发守卫，但计划约束要求“运行中拒绝（409）”
-  // 且 brief 自己的测试（第二条）断言第二个并发 POST 得到 409。最小修复：路由闭包内
-  // 维护 in-flight 标志。其余代码与 brief 逐字一致。
+  // Deviation from brief: the brief code snippet lacks a concurrency guard, but the plan constraint requires
+  // rejecting (409) while running, and the brief's own test (second case) asserts the second concurrent POST
+  // gets a 409. Minimal fix: maintain an in-flight flag in the route closure. Rest of code is verbatim with brief.
   let inFlight = false;
   http.post('/api/chat', async (_req, body) => {
     if (typeof body !== 'object' || body === null) throw new HttpError(400, 'missing body');
@@ -25,5 +25,5 @@ export function registerChatRoutes(http: HttpServer, engine: DaedalusEngine, hub
       inFlight = false;
     }
   });
-  // 引擎事件 → ws 广播（在 server.ts 装配 engine.subscribe 时接，chat 路由只管 run）
+  // Engine events → ws broadcast (wired in server.ts via engine.subscribe; chat route only handles run)
 }

@@ -1,7 +1,7 @@
 // src/server/http.ts
-// 从 anther server/http.ts 移植：精确路径路由、静态 + SPA fallback、ws。
-// SSE 分支按 daedalus 计划删除（daedalus 只用 ws）。导入后缀改为 .ts；
-// 参数属性改为显式字段（erasableSyntaxOnly）。
+// Ported from anther server/http.ts: exact-path routing, static + SPA fallback, ws.
+// SSE branch removed per daedalus plan (daedalus uses ws only). Import suffix changed to .ts;
+// parameter properties changed to explicit fields (erasableSyntaxOnly).
 import { createServer, IncomingMessage, ServerResponse } from 'node:http';
 import { readFile } from 'node:fs/promises';
 import path from 'node:path';
@@ -41,8 +41,8 @@ export class HttpServer {
 
   constructor(opts: { staticDir: string }) {
     this.staticDir = opts.staticDir;
-    // async 守卫：handler 是 void|Promise<void>，.catch 无法直接挂（void 无 .catch）；
-    // 用 async 回调 + try/catch，出错时 console.error 并关闭连接。
+    // Async guard: handler is void|Promise<void>, .catch can't be attached directly (void has no .catch);
+    // use async callback + try/catch, console.error on failure and close the connection.
     this.wss.on('connection', async (ws, req) => {
       const url = new URL(req.url ?? '/', 'http://localhost');
       const h = this.wsRoutes.get(url.pathname);
@@ -87,7 +87,7 @@ export class HttpServer {
   private async handle(req: IncomingMessage, res: ServerResponse) {
     try {
       const url = new URL(req.url ?? '/', 'http://localhost');
-      // HEAD 与 GET 同走静态服务（curl -I、链接预览工具会发 HEAD；无 body 响应）
+      // HEAD and GET both serve static files (curl -I, link preview tools send HEAD; response has no body)
       if ((req.method === 'GET' || req.method === 'HEAD') && !url.pathname.startsWith('/api/')) {
         await this.serveStatic(url.pathname, res, req.method === 'HEAD');
         return;
@@ -106,29 +106,29 @@ export class HttpServer {
     }
   }
 
-  /** 静态资源 + SPA fallback：存在则返回文件，否则返回 index.html；headOnly 时只发头不发 body */
+  /** Static assets + SPA fallback: return file if it exists, otherwise index.html; headOnly sends headers only. */
   private async serveStatic(urlPath: string, res: ServerResponse, headOnly = false) {
     let rel: string;
     try {
       rel = urlPath === '/' ? 'index.html' : decodeURIComponent(urlPath.slice(1));
     } catch {
-      // %zz 等畸形编码 decodeURIComponent 抛 URIError → 400 而非 500
+      // Malformed encodings like %zz cause decodeURIComponent to throw URIError → 400 instead of 500
       throw new HttpError(400, 'bad path');
     }
     const abs = path.resolve(this.staticDir, rel);
     if (!abs.startsWith(path.resolve(this.staticDir) + path.sep) && rel !== 'index.html') {
       throw new HttpError(400, 'bad path');
     }
-    // Content-Type 按实际读取到的文件决定：fallback 分支返回的是 index.html，
-    // 若用请求路径的扩展名（如 .ts）会落到 application/octet-stream → 浏览器把
-    // 应用页面当成文件下载
+    // Content-Type is determined by the actual file read: fallback returns index.html,
+    // using the request path's extension (e.g. .ts) would yield application/octet-stream → browser
+    // downloads the app page as a file
     let content: Buffer;
     let ext: string;
     try {
       content = await readFile(abs);
       ext = path.extname(abs);
     } catch {
-      // SPA fallback：任意路径都回 index.html
+      // SPA fallback: return index.html for any path
       content = await readFile(path.join(this.staticDir, 'index.html'));
       ext = '.html';
     }

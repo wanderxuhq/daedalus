@@ -1,6 +1,6 @@
 // src/server/http-error.ts
-// 从 anther server/http-error.ts 移植。唯一改动：参数属性（parameter property）在
-// daedalus 的 erasableSyntaxOnly 下不允许（TS1294），改为显式字段声明 + 赋值。
+// Ported from anther server/http-error.ts. Only change: parameter properties are disallowed
+// under daedalus's erasableSyntaxOnly (TS1294), so switched to explicit field declaration + assignment.
 export class HttpError extends Error {
   status: number;
 
@@ -11,7 +11,7 @@ export class HttpError extends Error {
   }
 }
 
-// res.json 辅助（挂在原型上，路由层直接用）
+// res.json helper (attached to prototype, used directly in route layer)
 import { ServerResponse } from 'node:http';
 declare module 'node:http' {
   interface ServerResponse {

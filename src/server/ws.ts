@@ -12,10 +12,10 @@ export interface SnapshotPayload {
   pendingPermission: { id: string; action: string; target: string } | null;
 }
 
-/** 终止本轮的事件：收到后清空 in-flight 日志，并撤下全部挂起权限。 */
+/** Event that ends the current turn: clears in-flight log and removes all pending permissions upon receipt. */
 const TERMINALS: ReadonlySet<CoreEvent['type']> = new Set(['done', 'error']);
 
-/** WebSocket 枢纽：连接即发快照；广播全部 CoreEvent；权限请求/响应转发。 */
+/** WebSocket hub: sends snapshot on connect; broadcasts all CoreEvents; forwards permission requests/responses. */
 export class WebSocketHub {
   private engine: Pick<DaedalusEngine, 'getSessionState' | 'listSubagents' | 'getSubagentMessages'>;
   private hub: EventHub;
@@ -52,8 +52,8 @@ export class WebSocketHub {
   private snapshot(): SnapshotPayload {
     const running = !TERMINALS.has(this.log[this.log.length - 1]?.type ?? 'done');
     return {
-      // 系统提示词存在会话消息里（role:'system'），但快照是 UI 数据 —— 下发它会让
-      // 浏览器把模型指令渲染成聊天气泡。这里在源头剔除，前端不再各自防御。
+      // System prompts live in session messages (role:'system'), but snapshots are UI data — sending them would
+      // cause the browser to render model instructions as chat bubbles. Filter them out here at the source.
       messages: this.engine.getSessionState().messages.filter((m) => m.role !== 'system'),
       subagents: this.hub.list(),
       running,
@@ -66,7 +66,7 @@ export class WebSocketHub {
     if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'event', ev }));
   }
 
-  /** 向所有客户端广播任意消息（权限请求等非 CoreEvent 消息）。 */
+  /** Broadcast any message to all clients (permission requests and other non-CoreEvent messages). */
   broadcast(msg: unknown): void {
     const raw = JSON.stringify(msg);
     for (const c of this.clients) if (c.readyState === c.OPEN) c.send(raw);
@@ -74,7 +74,7 @@ export class WebSocketHub {
 
   broadcastEvent(ev: CoreEvent): void {
     this.hub.handle(ev);
-    // 子代理事件不进入主会话日志，也不触发主会话终止逻辑。
+    // Subagent events don't enter the main session log or trigger main session termination logic.
     if (ev.agent !== undefined) {
       for (const c of this.clients) this.sendEvent(c, ev);
       return;

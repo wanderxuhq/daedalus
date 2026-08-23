@@ -31,8 +31,9 @@ if (flags.version) {
 
 const [cmd, ...rest] = process.argv.slice(2);
 if (cmd === 'web') {
-  // main() 在 listen 成功后即 resolve（服务存活由 server handle 维持；SIGTERM/SIGINT 在
-  // main 内部自行退出）。这里绝不能 process.exit —— 否则会把刚起好的服务当场杀掉。
+  // main() resolves once listen succeeds (server liveness is held by the handle;
+  // SIGTERM/SIGINT exits inside main itself). Never process.exit here — it would
+  // kill the just-started server immediately.
   try {
     await webMain(rest);
   } catch (e) {

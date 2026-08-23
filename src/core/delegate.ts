@@ -256,7 +256,7 @@ export function createDelegateTool(opts: DelegateToolOptions, depth = 0): Tool {
           const aiErr = err instanceof AiError ? err : new AiError('server', (err as Error).message);
           opts.onEvent?.({ type: 'error', agent: agentName, error: aiErr });
         });
-        return { content: `子代理已启动: ${agentName}\n任务: ${args.task}` };
+        return { content: `Subagent started: ${agentName}\nTask: ${args.task}` };
       }
       return runSubagent(opts, depth, enrichedInput, ctx);
     },

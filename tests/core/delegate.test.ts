@@ -531,7 +531,7 @@ test('delegate background mode returns immediately without blocking', async () =
   const elapsed = Date.now() - startTime;
   // Should return quickly (not wait for the 50ms subagent work)
   assert.ok(elapsed < 30, 'background mode returns immediately');
-  assert.ok(res.content.includes('子代理已启动'));
+  assert.ok(res.content.includes('Subagent started'));
   assert.ok(res.content.includes('T'));
   // Subagent is still running
   assert.equal(subagentRunning, true);

@@ -97,9 +97,9 @@ export class DaedalusEngine {
   private mainAgentTools: string[];
   /** Named subagent sessions, so `delegate {agent}` calls can keep their history across turns. */
   private sessionPool = new SessionPool();
-  /** 追踪正在运行 agent loop 的子代理，用于判断用户消息注入后是否需要重启 loop。 */
+  /** Tracks subagents currently running an agent loop, used to decide whether to restart after injecting a user message. */
   private runningSubagents = new Set<string>();
-  /** 子代理配置，用于重启子代理 loop 时复用。 */
+  /** Delegate configuration, reused when restarting subagent loops. */
   private delegateOptions: DelegateToolOptions | null = null;
   private usageStats = { inputTokens: 0, outputTokens: 0 };
   /** Team-wide file locks (main agent + subagents share one registry). */
@@ -288,7 +288,7 @@ export class DaedalusEngine {
     if (!this.runningSubagents.has(name)) {
       // Create a descriptive task label for the frontend
       const truncated = prompt.length > 40 ? prompt.slice(0, 40) + '...' : prompt;
-      const taskDesc = `继续: ${truncated}`;
+      const taskDesc = `Continue: ${truncated}`;
       this.startSubagentLoop(name, taskDesc);
     }
   }
@@ -314,7 +314,7 @@ export class DaedalusEngine {
     const opts = this.delegateOptions;
     // Emit delegate_start event so the frontend knows the subagent is running again.
     // This is important for restarting subagents after they complete.
-    this.session.bus.emit({ type: 'delegate_start', agent: name, task: task ?? '处理用户消息' });
+    this.session.bus.emit({ type: 'delegate_start', agent: name, task: task ?? 'Handle user message' });
     // Subscribe to subagent's session bus and forward events to main session bus.
     // Without this, events (text_delta, done, etc.) are lost and the frontend
     // never receives the subagent's response.
@@ -389,7 +389,7 @@ export class DaedalusEngine {
     return {
       id: loaded.id,
       updatedAt: loaded.updatedAt,
-      title: loaded.title ?? '未命名会话',
+      title: loaded.title ?? 'Untitled session',
       messageCount: loaded.messages.length,
     };
   }

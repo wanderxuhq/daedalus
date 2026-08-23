@@ -11,7 +11,7 @@ export class Session {
   readonly bus = new EventBus();
   private msgs: Message[] = [];
   private skills = new Set<string>();
-  /** 用户注入的消息队列，子代理下一轮 loop 迭代时处理。 */
+  /** Queue of user-injected messages, processed on the subagent's next loop iteration. */
   private pendingQueue: Message[] = [];
 
   start(): void {
@@ -26,12 +26,12 @@ export class Session {
     this.msgs.push(m);
   }
 
-  /** 注入用户消息到待处理队列，子代理下一轮 loop 迭代时处理。 */
+  /** Inject a user message into the pending queue, processed on the subagent's next loop iteration. */
   addPendingMessage(m: Message): void {
     this.pendingQueue.push(m);
   }
 
-  /** 取出并清空所有待处理消息，添加到会话历史。返回是否有新消息。 */
+  /** Drain all pending messages into the conversation history. Returns whether any new messages were added. */
   drainPendingMessages(): boolean {
     if (this.pendingQueue.length === 0) return false;
     this.msgs.push(...this.pendingQueue);
@@ -39,7 +39,7 @@ export class Session {
     return true;
   }
 
-  /** 是否有待处理的用户消息。 */
+  /** Whether there are pending user messages. */
   hasPendingMessages(): boolean {
     return this.pendingQueue.length > 0;
   }

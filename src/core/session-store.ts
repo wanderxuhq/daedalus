@@ -152,7 +152,7 @@ export class SessionStore {
           title:
             (typeof p.title === 'string' && p.title) ||
             titleFromMessages(Array.isArray(p.messages) ? p.messages : []) ||
-            '未命名会话',
+            'Untitled session',
           messageCount: Array.isArray(p.messages) ? p.messages.length : 0,
         });
       } catch {

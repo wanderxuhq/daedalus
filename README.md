@@ -140,27 +140,24 @@ Once started you land in the REPL prompt (`›`):
 
 Any other input is a prompt for the agent — a prompt submits on the first Enter. For multi-line input, press **Ctrl+Enter** (or, on terminals that distinguish it, **Shift+Enter**) to continue the prompt onto the next line, or end a line with `\` to do the same; then submit with `/run` (or an empty line). The agent runs, streams its response and tool calls, executes tools (asking `y/n` before shell commands unless auto-approve is on), and reports the result.
 
-### TUI
-
-On a TTY the REPL runs as a full-screen TUI (Claude Code-style): a statusline on top (model, context usage, plan/auto badges, a `▼ n` scroll-back indicator), the scrollable conversation in the middle, and a multi-line input editor at the bottom. **Ctrl+Enter**/**Shift+Enter** insert a real newline, so the prompt wraps and grows to several rows; **↑/↓** move the caret across wrapped rows (and recall history only at the buffer's top/bottom), **Ctrl+R** reverse-searches history, **Tab** completes `/` commands, **PgUp/PgDn** or the mouse wheel scroll back (the scroll indicator shows how far), **Ctrl+L** redraws, **F1** or `?` on an empty prompt opens the keymap overlay, and tool calls render as cards (unified diffs for edit/write). Streaming updates only the current line, so the screen stays stable while the agent works.
-
-The TUI needs no dependencies — it is hand-rolled ANSI escape sequences on raw mode: a custom key decoder, a double-buffered diff-painted grid, synchronized-output (`?2026`) frame rendering throttled to ~30fps, and bracketed paste. Mouse tracking is skipped on Termux so tapping still pops the soft keyboard. Fall back to the old line-based REPL with `daedalus --no-tui` (or `DAEDALUS_TUI=0`); pipes and `-p` single-shot mode never use the TUI.
-
 ## Tools
 
-Seven built-in tools are registered (see `src/tools/registry.ts`); the engine adds the `Skill` tool (see [Skills](#skills)) and the `delegate` tool (see [Multi-agent](#multi-agent)). By default the main agent calls `read`/`write`/`edit`/`Skill`/`delegate` directly, while `bash`/`ls`/`grep`/`glob` are delegated tools — available only to subagents, which keeps exploration and command output out of the main context:
+Ten built-in tools are registered (see `src/tools/registry.ts`); the engine adds the `Skill` tool (see [Skills](#skills)), the `delegate` tool, and `delegateMany` (see [Multi-agent](#multi-agent)). By default the main agent calls `read`/`write`/`edit`/`Skill`/`delegate`/`consult` directly, while `bash`/`ls`/`grep`/`glob`/`shell`/`diff` are delegated tools — available only to subagents, which keeps exploration and command output out of the main context:
 
 | Tool | Description | Used by |
 |---|---|---|
 | `bash` | Execute a shell command and return its output. Asks permission first (auto-approved in `--auto` mode); 2-minute timeout. | subagent (via `delegate`) |
+| `shell` | Execute a shell command with streaming output. | subagent (via `delegate`) |
 | `read` | Read a file, optionally with a line `offset`/`limit`. Refuses to read files over 1 MB whole (pass `offset`/`limit` instead); partial reads are line-numbered. | main agent + subagent |
 | `write` | Write content to a file. Asks permission before overwriting an existing file (auto-approved in `--auto` mode); creates parent directories automatically. | main agent + subagent |
 | `edit` | Replace an exact string in a file. Errors if the string is not found or matches more than once. | main agent + subagent |
 | `ls` | List directory contents; skips `node_modules` and `.git`. | subagent (via `delegate`) |
 | `grep` | Recursively search file contents for a regex pattern; skips `node_modules` and `.git`. | subagent (via `delegate`) |
 | `glob` | Find files matching a glob pattern (`*`, `**`, `?`); skips `node_modules` and `.git`. | subagent (via `delegate`) |
+| `diff` | Compute a unified diff between two files or strings. | subagent (via `delegate`) |
 | `Skill` | Load a skill by name; the skill body arrives as the tool result. Provided by the engine; see Skills. | main agent |
-| `delegate` | Run a self-contained task in a separate subagent with its own isolated context; returns only the subagent's final report. Provided by the engine; see Multi-agent. | main agent |
+| `delegate` | Run a self-contained task in a separate subagent with its own isolated context; returns only the subagent's final report. Supports `background: true` for async execution. Provided by the engine; see Multi-agent. | main agent |
+| `consult` | Consult another AI model for a second opinion without leaving the session. | main agent |
 
 ## Skills
 
@@ -286,8 +283,6 @@ Daedalus also exposes a small library API from `src/index.ts` (`createAiClient`,
 - Main chat with streaming, thinking, tool cards, inline permission cards (ask ↔ auto toggle).
 - Subagents panel (drawer on narrow screens) → click an agent for its detail view.
 - `#/sessions` for session management (continue / rename / delete / new).
-- Sessions share `~/.daedalus/sessions` with the CLI/TUI — they interoperate.
-
-The web UI is the primary interface going forward; the terminal TUI/REPL are
-retained for now and will be removed once the web UI matures.
+- Sessions share `~/.daedalus/sessions` with the CLI — they interoperate.
+- i18n: English (default) and 简体中文, auto-detected from browser language, persisted in localStorage.
 

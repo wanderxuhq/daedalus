@@ -13,7 +13,7 @@ export interface ServerDeps {
   staticDir?: string;
 }
 
-/** 装配 engine + ws + 路由；返回可 listen/close 的服务（测试友好）。 */
+/** Assemble engine + ws + routes; return a service that can listen/close (test-friendly). */
 export function buildServer(deps: ServerDeps): {
   http: HttpServer;
   engine: DaedalusEngine;
@@ -30,7 +30,7 @@ export function buildServer(deps: ServerDeps): {
   wsHub.attach(http);
   registerAll(http, { engine: deps.engine, store: deps.store, hub: wsHub });
 
-  // 引擎事件 → ws 广播；引擎权限 → web 审批。
+  // Engine events → ws broadcast; engine permissions → web approval.
   deps.engine.subscribe((ev) => wsHub.broadcastEvent(ev));
   deps.engine.setAskPermission(permission.ask);
   permission.setBroadcast((msg) => wsHub.broadcast(msg));
@@ -42,8 +42,8 @@ export function buildServer(deps: ServerDeps): {
     permission,
     listen: (port, host) => http.listen(port, host),
     address: () => http.address(),
-    // 装配即测（未 listen）时 http.close() 会抛 ERR_SERVER_NOT_RUNNING —— 吞掉它，
-    // 让只做装配断言的测试也能干净收尾。
+    // When testing assembly without listening, http.close() throws ERR_SERVER_NOT_RUNNING — swallow it,
+    // so tests that only assert assembly can still exit cleanly.
     close: () => http.close().catch((e: NodeJS.ErrnoException) => {
       if (e?.code !== 'ERR_SERVER_NOT_RUNNING') throw e;
     }),
@@ -59,7 +59,7 @@ export async function main(argv: string[]): Promise<void> {
       port = Number(raw);
     }
   }
-  // 复用 CLI 的 config 装配：provider/model/apiKey/baseURL → client
+  // Reuse CLI config assembly: provider/model/apiKey/baseURL → client
   const { loadConfig } = await import('../config/config.ts');
   const { createAiClient } = await import('../ai/index.ts');
   const base = loadConfig();
@@ -98,8 +98,8 @@ export async function main(argv: string[]): Promise<void> {
   console.log(`Sessions: ${store.dir}`);
 }
 
-// 直接运行时（node src/server/server.ts / dist/server/server.js）启动；被 import（测试）时不执行。
-// 复制 anther cli.ts 的守卫。
+// When run directly (node src/server/server.ts / dist/server/server.js), start the server; when imported (tests), skip execution.
+// Guard copied from anther cli.ts.
 import { pathToFileURL } from 'node:url';
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main(process.argv.slice(2)).catch((e) => {
