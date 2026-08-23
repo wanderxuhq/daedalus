@@ -40,9 +40,24 @@ export async function renameSession(id: string, title: string): Promise<void> {
 export async function deleteSession(id: string): Promise<void> {
   await request('POST', '/api/sessions/delete', { id });
 }
+export async function resumeSession(id: string): Promise<void> {
+  await request('POST', '/api/sessions', { id });
+}
 export async function getConfig(): Promise<{ model: string | null; autoApprove: boolean; planMode: boolean }> {
   return request('GET', '/api/config');
 }
 export async function putConfig(patch: { autoApprove?: boolean; planMode?: boolean; model?: string }): Promise<void> {
   await request('PUT', '/api/config', patch);
 }
+
+/** 给子代理发消息。 */
+export async function chatAgent(name: string, prompt: string): Promise<ChatResult> {
+  try {
+    await request('POST', '/api/agents/chat', { name, prompt });
+    return { status: 'ok', result: '' };
+  } catch (e) {
+    return { status: 'error', error: (e as Error).message };
+  }
+}
+
+
