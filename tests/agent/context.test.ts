@@ -14,11 +14,19 @@ function asst(text: string): Message {
 }
 const count = (msgs: Message[]): number => msgs.length;
 
-test('estimateTokens counts per-message, per-block, and per-char overhead', () => {
+test('estimateTokens counts per-message and per-block overhead plus text tokens', () => {
   assert.equal(estimateTokens([]), 0);
-  assert.equal(estimateTokens([{ role: 'user', content: [{ type: 'text', text: 'abcd' }] }]), 7); // 4 + ceil(4/4) + 2
-  assert.equal(estimateTokens([{ role: 'assistant', content: [{ type: 'tool_call', id: 't', name: 'bash', input: { command: 'ls' } }] }]), 10); // 4 + ceil(14/4) + 2
-  assert.equal(estimateTokens([{ role: 'user', content: [{ type: 'tool_result', toolCallId: 't', content: '0123456789abcdef' }] }]), 10); // 4 + ceil(16/4) + 2
+  // 4 (message) + 0 (empty text) + 2 (block) = 6
+  assert.equal(estimateTokens([{ role: 'user', content: [{ type: 'text', text: '' }] }]), 6);
+  // A tool_call block counts its JSON-serialized input the same way.
+  const call = estimateTokens([{ role: 'assistant', content: [{ type: 'tool_call', id: 't', name: 'bash', input: { command: 'ls' } }] }]);
+  const callText = JSON.stringify({ command: 'ls' });
+  assert.ok(call >= 4 + 2 + Math.ceil(callText.length / 4) - 2 && call <= 4 + 2 + callText.length, `tool_call estimate ${call} outside sanity band`);
+  // Longer text strictly increases the estimate (the text part is the exact
+  // Claude tokenizer count; 'hello world' is 2 tokens, so 4 + 2 + 2 = 8).
+  assert.equal(estimateTokens([{ role: 'user', content: [{ type: 'text', text: 'hello world' }] }]), 8);
+  const longer = estimateTokens([{ role: 'user', content: [{ type: 'text', text: 'hello world '.repeat(50) }] }]);
+  assert.ok(longer > 8);
 });
 
 test('keeps the system prefix and drops oldest whole turns (big-step to half budget)', () => {

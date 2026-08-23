@@ -38,6 +38,7 @@ export type StreamEvent =
   | { type: 'thinking_delta'; thinking: string }
   | { type: 'tool_call_start'; id: string; name: string }
   | { type: 'tool_call_delta'; id: string; inputDelta: string }
+  | { type: 'usage'; inputTokens: number; outputTokens: number }
   | { type: 'done'; message: Message }
   | { type: 'error'; error: AiError };
 

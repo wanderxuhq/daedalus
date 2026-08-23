@@ -11,9 +11,22 @@ test('converts system+user to openai body', () => {
   ];
   const body = toOpenAIBody({ model: 'gpt-4o', messages });
   assert.equal(body.stream, true);
+  // Ask for the usage object on the final chunk so per-turn tokens are visible.
+  assert.deepEqual(body.stream_options, { include_usage: true });
   assert.equal(body.messages[0].role, 'system');
   assert.equal(body.messages[0].content, 'You are helpful');
   assert.equal(body.messages[1].role, 'user');
+});
+
+test('usage: final chunk with usage becomes a usage event', () => {
+  const events = openaiEventsToIR([
+    { choices: [{ delta: { content: 'Hi' } }] },
+    { choices: [], usage: { prompt_tokens: 42, completion_tokens: 7, total_tokens: 49 } },
+  ]);
+  const types = events.map((e) => e.type);
+  assert.deepEqual(types, ['text_delta', 'usage', 'done']);
+  const usage = events.find((e) => e.type === 'usage');
+  assert.deepEqual(usage, { type: 'usage', inputTokens: 42, outputTokens: 7 });
 });
 
 test('converts tool_call and tool_result to openai format', () => {
@@ -36,14 +49,21 @@ test('converts tool definitions', () => {
   assert.equal(body.tools[0].function.parameters.type, 'object');
 });
 
-test('thinking enabled adds reasoning_effort, absent thinking leaves body untouched', () => {
+test('reasoning_effort: omitted without an explicit budget; strict tier mapping', () => {
   const messages: Message[] = [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }];
   const plain = toOpenAIBody({ model: 'm', messages });
   assert.equal('reasoning_effort' in plain, false);
-  const medium = toOpenAIBody({ model: 'm', messages, thinking: { enabled: true } });
-  assert.equal(medium.reasoning_effort, 'medium');
+  // No budget configured → omit the field entirely. Endpoints apply their own
+  // default, and gateways whose models force-enable reasoning (e.g. opencode
+  // zen, error [1210]) reject explicit efforts outside low/high/max.
+  const noBudget = toOpenAIBody({ model: 'm', messages, thinking: { enabled: true } });
+  assert.equal('reasoning_effort' in noBudget, false);
   const low = toOpenAIBody({ model: 'm', messages, thinking: { enabled: true, budgetTokens: 512 } });
   assert.equal(low.reasoning_effort, 'low');
+  // Mid budgets fold into "low": "medium" is rejected by the strictest
+  // compatible gateway, so the tier set is the low/high intersection.
+  const mid = toOpenAIBody({ model: 'm', messages, thinking: { enabled: true, budgetTokens: 4096 } });
+  assert.equal(mid.reasoning_effort, 'low');
   const high = toOpenAIBody({ model: 'm', messages, thinking: { enabled: true, budgetTokens: 16384 } });
   assert.equal(high.reasoning_effort, 'high');
 });

@@ -2,6 +2,7 @@ import { readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { AiProviderName } from '../ai/index.ts';
+import type { HookConfig } from '../core/hooks.ts';
 
 export interface DaedalusConfig {
   provider: AiProviderName;
@@ -15,6 +16,8 @@ export interface DaedalusConfig {
   thinking?: boolean;
   /** Thinking budget in tokens (Anthropic) / effort (OpenAI-compatible). */
   thinkingBudgetTokens?: number;
+  /** Lifecycle hooks (PreToolUse/PostToolUse/stop/notification); config file only. */
+  hooks?: HookConfig;
 }
 
 interface FileConfig {
@@ -26,6 +29,7 @@ interface FileConfig {
   autoApprove?: boolean;
   thinking?: boolean;
   thinkingBudgetTokens?: number;
+  hooks?: HookConfig;
 }
 
 function readFileConfig(env: NodeJS.ProcessEnv): FileConfig {
@@ -77,6 +81,7 @@ export function resolveConfig(env: NodeJS.ProcessEnv = process.env): ResolvedCon
     ...(autoApprove !== undefined ? { autoApprove } : {}),
     thinking,
     ...(thinkingBudgetTokens !== undefined ? { thinkingBudgetTokens } : {}),
+    ...(file.hooks ? { hooks: file.hooks } : {}),
   };
 }
 

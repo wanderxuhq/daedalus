@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import type { Tool, ToolContext, ToolResult } from './types.ts';
+import { truncateResult } from './output.ts';
 
 const IGNORE = new Set(['node_modules', '.git']);
 
@@ -15,6 +16,7 @@ export const lsTool: Tool = {
     const lines = entries
       .filter((e) => !IGNORE.has(e.name))
       .map((e) => (e.isDirectory() ? `${e.name}/` : e.name));
-    return { content: lines.join('\n') || '(empty)' };
+    const { content } = await truncateResult(lines.join('\n') || '(empty)');
+    return { content };
   },
 };

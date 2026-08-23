@@ -1,12 +1,15 @@
 import type { Message } from '../ai/types.ts';
+import { countTokens } from './tokenizer.ts';
 
-/** Minimum number of conversation turns that trimming always keeps. */
+/** Minimum number of conversation turns that trimming/compaction always keeps. */
 export const MIN_KEEP_TURNS = 2;
 
 /**
- * Zero-dependency token estimate: 4 per message + 2 per content block + 1 token
- * per 4 chars of the block's text. Deliberately approximate and slightly
- * conservative — the goal is to avoid blowing the window, not exactness.
+ * Token estimate: 4 per message + 2 per content block + the block's text
+ * counted by the exact Claude tokenizer (`countTokens`, which falls back to a
+ * char/4 heuristic if the dependency is unavailable). The per-message and
+ * per-block constants approximate the API framing overhead — deliberately
+ * conservative, since the goal is to avoid blowing the window.
  */
 export function estimateTokens(messages: Message[]): number {
   let n = 0;
@@ -17,7 +20,7 @@ export function estimateTokens(messages: Message[]): number {
         : b.type === 'thinking' ? b.thinking
         : b.type === 'tool_result' ? b.content
         : b.type === 'tool_call' ? JSON.stringify(b.input) ?? '' : '';
-      n += Math.ceil(text.length / 4);
+      n += countTokens(text);
       n += 2;
     }
   }
@@ -51,38 +54,52 @@ function isSkillBody(m: Message): boolean {
   );
 }
 
-/**
- * Drop oldest whole turns until the history fits `maxTokens / 2` (the design's
- * "big-step to 50% of budget" target; or `MIN_KEEP_TURNS` turns remain), keeping the
- * system prefix and never dropping a protected message
- * (pulling the cut back to keep its whole turn). Returns the input array unchanged
- * when nothing is trimmed, so callers can detect a trim via `!==`.
- */
-export function trimHistory(messages: Message[], opts: TrimOptions): Message[] {
-  const estimate = opts.estimate ?? estimateTokens;
-  const isProtected = opts.isProtected ?? isSkillBody;
+export interface TurnAnalysis {
+  /** Leading system messages (never trimmed/compacted). */
+  prefix: Message[];
+  /** Everything after the system prefix. */
+  conversation: Message[];
+  /** Indices into `conversation` where each user prompt turn starts. */
+  bounds: number[];
+}
 
-  // Leading system messages are never trimmed.
+/** Split a history into its immutable system prefix and the turn-bounded conversation. */
+export function analyzeTurns(messages: Message[]): TurnAnalysis {
   let start = 0;
   while (start < messages.length && messages[start].role === 'system') start++;
   const prefix = messages.slice(0, start);
   const conversation = messages.slice(start);
-  if (conversation.length === 0) return messages;
-
-  // Turn-boundary indices into `conversation` (start of each user prompt).
   const bounds: number[] = [];
   for (let i = 0; i < conversation.length; i++) {
     if (isPrompt(conversation[i])) bounds.push(i);
   }
-  if (bounds.length === 0) return messages;
+  return { prefix, conversation, bounds };
+}
 
-  // How many leading turns to drop (grows until within half the budget / at the floor).
-  // Big-step (design §4.1): trim to maxTokens/2 so a trim buys headroom and does not
-  // re-trigger the next turn, keeping cache misses rare.
+/**
+ * How many leading turns must go — dropped by trimHistory or summarized by
+ * compactHistory — to fit the budget (big-step to `maxTokens / 2`, never below
+ * `MIN_KEEP_TURNS` turns, never across a protected message). 0 = under budget.
+ */
+export function computeTrimCut(messages: Message[], opts: TrimOptions): number {
+  const estimate = opts.estimate ?? estimateTokens;
+  const isProtected = opts.isProtected ?? isSkillBody;
+  const { prefix, conversation, bounds } = analyzeTurns(messages);
+  if (bounds.length === 0) return 0;
+
+  // Per-message token cost, computed ONCE (one encode per message), then a
+  // suffix sum. The previous loop re-estimated the whole remaining history at
+  // every cut step — fine under char/4, quadratic under a real tokenizer.
+  const costs = conversation.map((m) => estimate([m]));
+  const suffix = new Array<number>(conversation.length + 1);
+  suffix[conversation.length] = 0;
+  for (let i = conversation.length - 1; i >= 0; i--) suffix[i] = suffix[i + 1] + costs[i];
+  const prefixCost = prefix.reduce((n, m) => n + estimate([m]), 0);
+
   let cut = 0;
   while (
     cut < bounds.length - MIN_KEEP_TURNS &&
-    estimate([...prefix, ...conversation.slice(bounds[cut])]) > opts.maxTokens / 2
+    prefixCost + suffix[bounds[cut]] > opts.maxTokens / 2
   ) {
     cut++;
   }
@@ -98,6 +115,20 @@ export function trimHistory(messages: Message[], opts: TrimOptions): Message[] {
   }
   if (protectIdx >= 0) cut = protectIdx;
 
+  return cut;
+}
+
+/**
+ * Drop oldest whole turns until the history fits `maxTokens / 2` (the design's
+ * "big-step to 50% of budget" target; or `MIN_KEEP_TURNS` turns remain), keeping the
+ * system prefix and never dropping a protected message
+ * (pulling the cut back to keep its whole turn). Returns the input array unchanged
+ * when nothing is trimmed, so callers can detect a trim via `!==`.
+ */
+export function trimHistory(messages: Message[], opts: TrimOptions): Message[] {
+  const { prefix, conversation, bounds } = analyzeTurns(messages);
+  if (bounds.length === 0) return messages;
+  const cut = computeTrimCut(messages, opts);
   if (cut === 0) return messages;
   return [...prefix, ...conversation.slice(bounds[cut])];
 }

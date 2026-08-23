@@ -25,6 +25,7 @@ test('server assembly wires engine, ws, routes, permission (smoke)', async () =>
     getAutoApprove: () => false, setAutoApprove: () => {},
     getPlanMode: () => false, setPlanMode: () => {},
     usage: () => ({ inputTokens: 0, outputTokens: 0 }),
+    injectSubagentMessage: () => {},
   };
   const srv = buildServer({ engine: engineStub as any, store, staticDir: process.cwd() });
   await srv.listen(0, '127.0.0.1');
@@ -48,6 +49,7 @@ test('buildServer wires engine events to ws and permission round-trip', async ()
     setAskPermission: (ask: (action: string, target: string) => Promise<boolean>) => { installedAsk = ask; },
     getAutoApprove: () => autoApprove,
     setAutoApprove: (v: boolean) => { autoApprove = v; },
+    injectSubagentMessage: () => {},
     run: async (p: string) => `ok:${p}`,
     getSessionState: () => ({ messages: [], loadedSkills: [] }),
     listSubagents: () => [],
@@ -73,9 +75,10 @@ test('buildServer wires engine events to ws and permission round-trip', async ()
   srv.permission.settle('p1', true, false);
   assert.equal(await pending, true);
 
-  // subscribed handler feeds broadcastEvent: hub.handle tracks subagents + log grows
+  // subscribed handler feeds broadcastEvent: hub.handle tracks subagents
   subscribed!({ type: 'delegate_start', agent: 'scout', task: 'explore' });
-  assert.equal((srv.hub as any).log.length, 1, 'broadcastEvent should log non-terminal events');
+  // 子代理事件不进主会话 log（独立上下文），只广播给客户端。
+  assert.equal((srv.hub as any).log.length, 0, 'subagent events do not pollute the main log');
   assert.equal(srv.permission.pending(), null);
 
   await srv.close();

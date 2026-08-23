@@ -23,3 +23,23 @@ test('--auto can combine with --resume', () => {
   assert.equal(flags.resume, '1');
   assert.equal(flags.auto, '1');
 });
+
+test('--version is a boolean flag', () => {
+  assert.deepEqual(parseFlags(['--version']), { version: '1' });
+  assert.equal(parseFlags(['--auto', '--version']).version, '1');
+});
+
+test('-p/--prompt consumes the next argument as the prompt', () => {
+  assert.deepEqual(parseFlags(['-p', 'fix the bug']), { prompt: 'fix the bug' });
+  assert.deepEqual(parseFlags(['--prompt', 'hi']), { prompt: 'hi' });
+});
+
+test('-p without a value (or followed by a flag) yields an empty prompt', () => {
+  assert.deepEqual(parseFlags(['-p']), { prompt: '' });
+  assert.deepEqual(parseFlags(['-p', '--auto']), { prompt: '', auto: '1' });
+});
+
+test('--output-format passes through', () => {
+  assert.deepEqual(parseFlags(['--output-format', 'json']), { outputFormat: 'json' });
+  assert.deepEqual(parseFlags(['-p', 'x', '--output-format', 'json']), { prompt: 'x', outputFormat: 'json' });
+});

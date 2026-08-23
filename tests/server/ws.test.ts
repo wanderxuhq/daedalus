@@ -63,7 +63,13 @@ async function nextMessage(ws: WebSocket, type: string, timeoutMs = 1000): Promi
 
 function fakeEngine() {
   return {
-    getSessionState: () => ({ messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }], loadedSkills: [] }),
+    getSessionState: () => ({
+      messages: [
+        { role: 'system', content: [{ type: 'text', text: 'You are Daedalus' }] },
+        { role: 'user', content: [{ type: 'text', text: 'hi' }] },
+      ],
+      loadedSkills: [],
+    }),
     listSubagents: () => [],
     getSubagentMessages: () => [],
   };
@@ -78,7 +84,9 @@ test('sends snapshot on connect with current messages + subagents + running', as
     ws = await connect(hub, http);
     const msg = await nextMessage(ws, 'snapshot');
     assert.equal(msg.type, 'snapshot');
+    // role:'system'（引擎存进会话的 system prompt）不下发 —— UI 数据不是模型数据。
     assert.equal(msg.messages.length, 1);
+    assert.equal(msg.messages[0].role, 'user');
     assert.equal(msg.running, false);
   } finally {
     ws?.close();

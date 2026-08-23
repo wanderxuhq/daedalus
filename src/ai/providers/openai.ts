@@ -14,11 +14,15 @@ export interface OpenAIClientConfig {
 const DEFAULT_MODEL = 'gpt-4o';
 const DEFAULT_BASE = 'https://api.openai.com/v1';
 
-/** Map a token budget to the closest reasoning_effort OpenAI-compatible tiers. */
-function effortForBudget(budgetTokens?: number): string {
-  if (budgetTokens === undefined) return 'medium';
-  if (budgetTokens < 2048) return 'low';
-  if (budgetTokens < 8192) return 'medium';
+/**
+ * Map an explicit token budget to the strictest-common-denominator
+ * reasoning_effort tiers. Only low/high are sent: some gateways' always-thinking
+ * models (opencode zen, error [1210]) reject "medium" outright, and omitting
+ * the field entirely lets each endpoint apply its own default.
+ */
+function effortForBudget(budgetTokens?: number): string | undefined {
+  if (budgetTokens === undefined) return undefined;
+  if (budgetTokens < 8192) return 'low';
   return 'high';
 }
 
@@ -56,14 +60,19 @@ export function toOpenAIBody(params: ChatParams): Record<string, unknown> {
     model: params.model,
     messages,
     stream: true,
+    // Ask for the usage object on the final stream chunk (OpenAI-style). It is
+    // how the agent surfaces per-turn token counts (CC-style /cost + status).
+    stream_options: { include_usage: true },
   };
   if (params.maxTokens !== undefined) body.max_tokens = params.maxTokens;
   if (params.temperature !== undefined) body.temperature = params.temperature;
   // Extended thinking on OpenAI-compatible endpoints: reasoning_effort is the
-  // closest standard knob. Endpoints that ignore it simply answer normally.
-  if (params.thinking?.enabled === true) {
-    body.reasoning_effort = effortForBudget(params.thinking.budgetTokens);
-  }
+  // closest standard knob, but only with an explicit budget — an unconditional
+  // default ("medium") got rejected by gateways whose models always think and
+  // accept only low/high/max (error [1210]). Endpoints that ignore it answer
+  // normally either way.
+  const effort = params.thinking?.enabled === true ? effortForBudget(params.thinking.budgetTokens) : undefined;
+  if (effort !== undefined) body.reasoning_effort = effort;
   if (params.tools?.length) {
     body.tools = params.tools.map((t) => ({
       type: 'function',
@@ -127,6 +136,11 @@ export class OpenAISSEConverter {
     if (payload.error) {
       const err = payload.error as { message?: string };
       events.push({ type: 'error', error: new AiError('server', err?.message ?? 'unknown error') });
+    }
+    // Final chunk carries the totals when stream_options.include_usage is set.
+    const usage = payload.usage as { prompt_tokens?: number; completion_tokens?: number } | undefined;
+    if (usage && (usage.prompt_tokens ?? 0) + (usage.completion_tokens ?? 0) > 0) {
+      events.push({ type: 'usage', inputTokens: usage.prompt_tokens ?? 0, outputTokens: usage.completion_tokens ?? 0 });
     }
     return events;
   }

@@ -1,11 +1,12 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DaedalusEngine } from '../../src/core/engine.ts';
-import type { AiClient } from '../../src/ai/types.ts';
-import { buildSystemPrompt } from '../../src/core/system-prompt.ts';
+import type { AiClient, Message } from '../../src/ai/types.ts';
+import type { HookConfig } from '../../src/core/hooks.ts';
+import { buildSystemPrompt, DEFAULT_MAIN_AGENT_TOOLS, BUILTIN_TOOL_NAMES, DELEGATE_TOOL_NAME } from '../../src/core/system-prompt.ts';
 import { SessionStore } from '../../src/core/session-store.ts';
 import type { SessionState } from '../../src/core/session.ts';
 
@@ -26,6 +27,9 @@ function opts(overrides: Partial<{
   sessionId: string;
   sessionStore: SessionStore;
   maxContextTokens: number;
+  mainAgentTools: string[];
+  delegateMaxDepth: number;
+  hooks: HookConfig;
 }> = {}) {
   return {
     client: overrides.client ?? textClient('ok'),
@@ -36,6 +40,9 @@ function opts(overrides: Partial<{
     ...(overrides.initialState ? { initialState: overrides.initialState } : {}),
     ...(overrides.sessionStore ? { sessionStore: overrides.sessionStore } : {}),
     ...(overrides.maxContextTokens !== undefined ? { maxContextTokens: overrides.maxContextTokens } : {}),
+    ...(overrides.mainAgentTools ? { mainAgentTools: overrides.mainAgentTools } : {}),
+    ...(overrides.delegateMaxDepth !== undefined ? { delegateMaxDepth: overrides.delegateMaxDepth } : {}),
+    ...(overrides.hooks ? { hooks: overrides.hooks } : {}),
   };
 }
 
@@ -154,7 +161,7 @@ test('constructor injects the system prompt once as the first message', async ()
       async *streamChat(params) {
         systemCount = params.messages.filter((m) => m.role === 'system').length;
         firstRole = params.messages[0]?.role ?? '';
-        gotPrompt = params.messages.some((m) => m.role === 'system' && m.content[0].type === 'text' && m.content[0].text === buildSystemPrompt());
+        gotPrompt = params.messages.some((m) => m.role === 'system' && m.content[0].type === 'text' && m.content[0].text === buildSystemPrompt({ tools: [...DEFAULT_MAIN_AGENT_TOOLS] }));
         yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] } };
       },
     },
@@ -163,6 +170,54 @@ test('constructor injects the system prompt once as the first message', async ()
   assert.equal(systemCount, 1);
   assert.equal(firstRole, 'system');
   assert.equal(gotPrompt, true);
+  await engine.dispose();
+});
+
+test('layering: main agent has no bash/ls/grep/glob; a delegated subagent gets the full toolset', async () => {
+  const calls: string[][] = [];
+  const client: AiClient = {
+    async *streamChat(params) {
+      calls.push((params.tools ?? []).map((t) => t.name));
+      if (calls.length === 1) {
+        // main agent delegates exploration
+        yield { type: 'done', message: { role: 'assistant', content: [{ type: 'tool_call', id: 'd', name: 'delegate', input: { task: 'explore the repo' } }] } };
+      } else if (calls.length === 2) {
+        // subagent reports back
+        yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'found it' }] } };
+      } else {
+        // main agent concludes
+        yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] } };
+      }
+    },
+  };
+  const engine = new DaedalusEngine(opts({ client, maxIterations: 5 }));
+  const result = await engine.run('understand the repo');
+  assert.equal(result, 'done');
+
+  const main = calls[0];
+  assert.ok(main.includes(DELEGATE_TOOL_NAME) && main.includes('read') && main.includes('write') && main.includes('edit') && main.includes('Skill'));
+  for (const banned of ['bash', 'ls', 'grep', 'glob']) {
+    assert.ok(!main.includes(banned), `main agent must not have ${banned}`);
+  }
+  // The subagent receives the FULL builtin toolset (and never delegate itself).
+  assert.deepEqual(calls[1].slice().sort(), [...BUILTIN_TOOL_NAMES].slice().sort());
+  await engine.dispose();
+});
+
+test('mainAgentTools can restore self-service exploration (full toolset)', async () => {
+  let mainTools: string[] = [];
+  const client: AiClient = {
+    async *streamChat(params) {
+      mainTools = (params.tools ?? []).map((t) => t.name);
+      yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] } };
+    },
+  };
+  const engine = new DaedalusEngine(opts({
+    client,
+    mainAgentTools: [...BUILTIN_TOOL_NAMES, 'Skill', DELEGATE_TOOL_NAME],
+  }));
+  await engine.run('hi');
+  assert.deepEqual(mainTools.slice().sort(), [...BUILTIN_TOOL_NAMES, 'Skill', DELEGATE_TOOL_NAME].slice().sort());
   await engine.dispose();
 });
 
@@ -268,6 +323,18 @@ test('resume() throws a clear error without a session store', async () => {
   await engine.dispose();
 });
 
+test('resume() with no saved sessions says where sessions live (actionable, not "no directory")', async () => {
+  const dir = join(tmpdir(), `dae-eng-resume-empty-${Date.now()}`);
+  const store = new SessionStore(dir); // dir does not exist yet
+  const engine = new DaedalusEngine({ ...opts(), sessionStore: store });
+  const err = await engine.resume().then(() => null, (e: Error) => e);
+  assert.ok(err, 'resume must throw');
+  assert.ok(!/directory/i.test(err!.message), 'must not leak a raw ENOENT');
+  assert.ok(err!.message.includes('run a conversation first'), `message must be actionable, got: ${err!.message}`);
+  assert.ok(err!.message.includes(dir), `message must point at the sessions dir: ${err!.message}`);
+  await engine.dispose();
+});
+
 test('resume() switches to a persisted session and keeps writing to its file', async () => {
   const dir = join(tmpdir(), `dae-eng-resume-${Date.now()}`);
   mkdirSync(dir, { recursive: true });
@@ -340,3 +407,200 @@ test('resume (initialState + sessionId) continues writing to the same file', asy
   assert.ok(after.messages.some((m) => m.content.some((c) => c.type === 'text' && c.text === 'second turn')));
   rmSync(dir, { recursive: true, force: true });
 });
+
+test('usage() accumulates tokens across runs from usage events', async () => {
+  const engine = new DaedalusEngine(opts({
+    client: {
+      async *streamChat() {
+        yield { type: 'usage', inputTokens: 100, outputTokens: 40 };
+        yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'r1' }] } };
+      },
+    },
+  }));
+  await engine.run('first');
+  await engine.run('second');
+  assert.deepEqual(engine.usage(), { inputTokens: 200, outputTokens: 80 });
+  await engine.dispose();
+});
+
+test('run forwards an AbortSignal to the client', async () => {
+  const ac = new AbortController();
+  let gotSignal: AbortSignal | undefined;
+  const engine = new DaedalusEngine(opts({
+    client: {
+      async *streamChat(params) {
+        gotSignal = params.signal;
+        yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] } };
+      },
+    },
+  }));
+  await engine.run('hi', { signal: ac.signal });
+  assert.ok(gotSignal === ac.signal);
+  await engine.dispose();
+});
+
+test('setModel forwards a per-request model override; unset uses the client default', async () => {
+  const seen: (string | undefined)[] = [];
+  const client: AiClient = {
+    async *streamChat(params) {
+      seen.push(params.model);
+      yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] } };
+    },
+  };
+  const engine = new DaedalusEngine(opts({ client }));
+  assert.equal(engine.getModel(), undefined);
+  await engine.run('default');
+  engine.setModel('claude-test');
+  assert.equal(engine.getModel(), 'claude-test');
+  await engine.run('overridden');
+  assert.deepEqual(seen, [undefined, 'claude-test']);
+  await engine.dispose();
+});
+
+test('clearConversation drops history but keeps the system prompt and skills', async () => {
+  const engine = new DaedalusEngine(opts({
+    initialState: {
+      messages: [
+        { role: 'system', content: [{ type: 'text', text: 'SYS' }] },
+        { role: 'user', content: [{ type: 'text', text: 'q1' }] },
+        { role: 'assistant', content: [{ type: 'text', text: 'a1' }] },
+      ],
+      loadedSkills: ['review'],
+    },
+  }));
+  assert.equal(engine.getSessionState().messages.length, 3);
+  const dropped = engine.clearConversation();
+  assert.equal(dropped, 2);
+  const after = engine.getSessionState();
+  assert.deepEqual(after.messages.map((m) => m.role), ['system']);
+  assert.deepEqual(after.loadedSkills, []);
+  await engine.dispose();
+});
+
+test('contextUsage estimates the live history tokens vs the budget', async () => {
+  const engine = new DaedalusEngine(opts({ maxContextTokens: 500 }));
+  const u = engine.contextUsage();
+  assert.equal(u.maxTokens, 500);
+  assert.ok(u.tokens > 0, 'system prompt alone is > 0 tokens');
+  await engine.dispose();
+});
+
+test('compactNow summarizes when over budget and emits context_compact', async () => {
+  const messages: Message[] = [];
+  for (let i = 0; i < 8; i++) {
+    messages.push({ role: 'user', content: [{ type: 'text', text: 'question '.repeat(300) }] });
+    messages.push({ role: 'assistant', content: [{ type: 'text', text: 'answer '.repeat(300) }] });
+  }
+  const events: string[] = [];
+  const engine = new DaedalusEngine(opts({
+    maxContextTokens: 500, // way under the ~10k of history above
+    initialState: { messages, loadedSkills: [] },
+    client: textClient('summarized'),
+  }));
+  engine.subscribe((ev) => { if (ev.type === 'context_compact' || ev.type === 'context_trim') events.push(ev.type); });
+  const res = await engine.compactNow();
+  assert.equal(res.status, 'compacted');
+  assert.ok(res.dropped > 0);
+  assert.ok(res.kept < messages.length + 1); // + defensive system prompt
+  assert.deepEqual(events, ['context_compact']);
+  await engine.dispose();
+});
+
+test('compactNow reports idle when under budget', async () => {
+  const engine = new DaedalusEngine(opts());
+  const res = await engine.compactNow();
+  assert.deepEqual(res, { status: 'idle', dropped: 0, kept: 1 }); // just the system prompt
+  await engine.dispose();
+});
+
+test('initMemory creates DAEDALUS.md only when missing', async () => {
+  const dir = join(tmpdir(), `dae-eng-init-${Date.now()}`);
+  mkdirSync(dir, { recursive: true });
+  const engine = new DaedalusEngine({ ...opts(), cwd: dir });
+  const first = await engine.initMemory();
+  assert.equal(first.created, true);
+  assert.equal(first.path, join(dir, 'DAEDALUS.md'));
+  assert.ok(readFileSync(join(dir, 'DAEDALUS.md'), 'utf8').includes('# DAEDALUS.md'));
+  const second = await engine.initMemory();
+  assert.equal(second.created, false); // never overwrites
+  await engine.dispose();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('dispose runs the stop hook', async () => {
+  const dir = join(tmpdir(), `dae-eng-stop-${Date.now()}`);
+  mkdirSync(dir, { recursive: true });
+  const marker = join(dir, 'stopped.txt');
+  const engine = new DaedalusEngine(opts({
+    hooks: { stop: `node -e "require('fs').writeFileSync(process.argv[1], 'bye')" ${JSON.stringify(marker)}` },
+  }));
+  await engine.dispose();
+  assert.equal(readFileSync(marker, 'utf8'), 'bye');
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('plan mode removes write/edit from the main toolset and exits after a run', async () => {
+  let toolNames: string[] = [];
+  const client: AiClient = {
+    async *streamChat(params) {
+      toolNames = (params.tools ?? []).map((t) => t.name);
+      yield { type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'plan' }] } };
+    },
+  };
+  const engine = new DaedalusEngine(opts({ client }));
+  assert.equal(engine.getPlanMode(), false);
+  engine.setPlanMode(true);
+  assert.equal(engine.getPlanMode(), true);
+
+  await engine.run('explore read-only');
+  assert.ok(!toolNames.includes('write'), 'write must be absent in plan mode');
+  assert.ok(!toolNames.includes('edit'), 'edit must be absent in plan mode');
+  assert.ok(toolNames.includes('read'), 'read stays available');
+  assert.equal(engine.getPlanMode(), false, 'a completed run exits plan mode');
+
+  // Normal mode has write/edit back on the next run.
+  await engine.run('now implement');
+  assert.ok(toolNames.includes('write'));
+  assert.ok(toolNames.includes('edit'));
+  await engine.dispose();
+});
+
+test('inspecting an unknown subagent does not materialize an empty pooled session', async () => {
+  const engine = new DaedalusEngine(opts());
+  assert.deepEqual(engine.listSubagents(), []);
+  // The REPL /agent <name> path: must return [] without creating a session
+  // (which would then show up in /agents and emit a phantom session_start).
+  assert.deepEqual(engine.getSubagentMessages('never-used'), []);
+  assert.deepEqual(engine.listSubagents(), [], 'no session created by inspection');
+  await engine.dispose();
+});
+
+test('injectSubagentMessage adds a user message to a running subagent session', async () => {
+  const engine = new DaedalusEngine(opts());
+  // Simulate a delegate-created subagent by injecting into a named session.
+  // First, ensure the session exists.
+  engine.injectSubagentMessage('worker', 'do the thing');
+  const msgs = engine.getSubagentMessages('worker');
+  // The injected message should be present (role: user).
+  const userMsg = msgs.find((m) => m.role === 'user');
+  assert.ok(userMsg, 'user message was injected');
+  assert.equal(userMsg.content[0].type, 'text');
+  assert.equal((userMsg.content[0] as any).text, 'do the thing');
+  await engine.dispose();
+});
+
+test('injectSubagentMessage on unknown name creates the session', async () => {
+  const engine = new DaedalusEngine(opts());
+  assert.deepEqual(engine.listSubagents(), []);
+  engine.injectSubagentMessage('new-agent', 'hello');
+  // Wait for the agent loop to complete
+  await new Promise((r) => setTimeout(r, 100));
+  const list = engine.listSubagents();
+  assert.equal(list.length, 1);
+  assert.equal(list[0].name, 'new-agent');
+  // 3 messages: system prompt + user message + assistant response
+  assert.equal(list[0].messageCount, 3);
+  await engine.dispose();
+});
+
+undefined

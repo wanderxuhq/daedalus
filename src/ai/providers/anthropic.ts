@@ -117,6 +117,23 @@ export function anthropicEventsToIR(payloads: Record<string, unknown>[]): Stream
 
   for (const p of payloads) {
     switch (p.type) {
+      case 'message_start': {
+        // Message-level usage arrives up front: input + any cache reads/writes.
+        const usage = (p.message as { usage?: Record<string, number> } | undefined)?.usage;
+        if (usage) {
+          const input = (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
+          const output = usage.output_tokens ?? 0;
+          if (input || output) events.push({ type: 'usage', inputTokens: input, outputTokens: output });
+        }
+        break;
+      }
+      case 'message_delta': {
+        // Streaming output tokens are reported in the final delta.
+        const usage = p.usage as { output_tokens?: number } | undefined;
+        const output = usage?.output_tokens ?? 0;
+        if (output) events.push({ type: 'usage', inputTokens: 0, outputTokens: output });
+        break;
+      }
       case 'content_block_start': {
         const cb = p.content_block as { type: string; id?: string; name?: string; text?: string; thinking?: string; signature?: string };
         blocks.push({ type: cb.type, id: cb.id, name: cb.name, text: cb.text ?? '', thinking: cb.thinking ?? '', signature: cb.signature });

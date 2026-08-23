@@ -12,18 +12,116 @@ export interface SubagentInfo {
 }
 
 export interface UiState {
+  /** 渲染列表：快照回填的存量消息 + 本地回显的用户消息 + done 落地的回复。 */
   messages: unknown[];
   subagents: SubagentInfo[];
   running: boolean;
   log: CoreEvent[];
   pendingPermission: { id: string; action: string; target: string } | null;
   autoApprove: boolean;
+  /** 最近一次主会话 error 事件的文案（横幅展示；快照/新一轮提交时清除）。 */
+  error: string | null;
+  /** 当前正在查看的子代理名称，null 表示查看主会话。 */
+  viewingSubagent: string | null;
+  /** 当前查看的子代理的消息列表。 */
+  subagentMessages: unknown[];
+  /** 当前正在流式输出的助手消息（实时渲染用）。 */
+  streamingMessage: { role: string; content: unknown[] } | null;
 }
 
 const TERMINALS: ReadonlySet<CoreEvent['type']> = new Set(['done', 'error']);
 
 export function initialUiState(): UiState {
-  return { messages: [], subagents: [], running: false, log: [], pendingPermission: null, autoApprove: false };
+  return { messages: [], subagents: [], running: false, log: [], pendingPermission: null, autoApprove: false, error: null, viewingSubagent: null, subagentMessages: [], streamingMessage: null };
+}
+
+/** 用户点发送：本地立即回显 user 消息（不等服务端），清掉上一次的错误和流式消息。 */
+export function submitPrompt(state: UiState, prompt: string): UiState {
+  return {
+    ...state,
+    error: null,
+    streamingMessage: null, // 清空流式消息
+    messages: [...state.messages, { role: 'user', content: [{ type: 'text', text: prompt }] }],
+  };
+}
+
+/** 给子代理发消息：本地回显到 subagentMessages。 */
+export function submitSubagentPrompt(state: UiState, prompt: string): UiState {
+  return {
+    ...state,
+    error: null,
+    subagentMessages: [...state.subagentMessages, { role: 'user', content: [{ type: 'text', text: prompt }] }],
+  };
+}
+
+/** 更新流式消息：根据事件类型累积文本、思考和工具调用。 */
+function updateStreamingMessage(state: UiState, ev: CoreEvent): { role: string; content: unknown[] } | null {
+  // 如果没有流式消息且事件是文本/思考/工具调用开始，创建新的流式消息
+  if (!state.streamingMessage) {
+    if (ev.type === 'text_delta' || ev.type === 'thinking_delta' || ev.type === 'tool_call_start') {
+      const content: unknown[] = [];
+      if (ev.type === 'text_delta') {
+        content.push({ type: 'text', text: ev.text });
+      } else if (ev.type === 'thinking_delta') {
+        content.push({ type: 'thinking', thinking: ev.thinking });
+      } else if (ev.type === 'tool_call_start') {
+        content.push({ type: 'tool_call', id: ev.id, name: ev.name, input: '', status: 'pending' });
+      }
+      return { role: 'assistant', content };
+    }
+    return null;
+  }
+
+  // 如果有流式消息，更新它
+  const content = [...state.streamingMessage.content];
+  switch (ev.type) {
+    case 'text_delta': {
+      // 查找最后一个文本块并追加
+      const lastText = [...content].reverse().find((c: any) => c.type === 'text');
+      if (lastText) {
+        (lastText as any).text += ev.text;
+      } else {
+        content.push({ type: 'text', text: ev.text });
+      }
+      break;
+    }
+    case 'thinking_delta': {
+      // 查找最后一个思考块并追加
+      const lastThinking = [...content].reverse().find((c: any) => c.type === 'thinking');
+      if (lastThinking) {
+        (lastThinking as any).thinking += ev.thinking;
+      } else {
+        content.push({ type: 'thinking', thinking: ev.thinking });
+      }
+      break;
+    }
+    case 'tool_call_start': {
+      // 添加新的工具调用
+      content.push({ type: 'tool_call', id: ev.id, name: ev.name, input: '', status: 'pending' });
+      break;
+    }
+    case 'tool_call_delta': {
+      // 更新工具调用的输入
+      const toolCall = content.find((c: any) => c.type === 'tool_call' && c.id === ev.id);
+      if (toolCall) {
+        (toolCall as any).input += ev.inputDelta;
+      }
+      break;
+    }
+    case 'tool_result': {
+      // 更新工具调用状态为完成
+      const toolCall = content.find((c: any) => c.type === 'tool_call' && c.id === ev.id);
+      if (toolCall) {
+        (toolCall as any).status = ev.isError ? 'error' : 'done';
+        (toolCall as any).resultContent = ev.content;
+        (toolCall as any).diff = ev.diff;
+      }
+      break;
+    }
+    default:
+      break;
+  }
+  return { role: 'assistant', content };
 }
 
 export function applyEnvelope(state: UiState, env: EventEnvelope): UiState {
@@ -37,11 +135,36 @@ export function applyEnvelope(state: UiState, env: EventEnvelope): UiState {
     // 偏差（constraint > snippet）：plan 片段用 `log.length > 0`，但其测试要求
     // tool_result 落地后 running 为 false —— 故最新事件为已结算的 tool_result 时视为空闲。
     const running = log.length > 0 && ev.type !== 'tool_result';
-    return { ...state, log, running };
+    // 渲染断层修复：messages 只在 snapshot 时更新过，实时轮次从不上屏。
+    // done 携带最终 assistant 消息 → 落进渲染列表；error → 横幅字段。
+    let messages = state.messages;
+    let error = state.error;
+    let streamingMessage = state.streamingMessage;
+    if (ev.type === 'done' && ev.message.role === 'assistant') {
+      messages = [...state.messages, ev.message];
+      streamingMessage = null; // done 事件后清空流式消息
+    } else if (ev.type === 'error') {
+      error = ev.error.message;
+      streamingMessage = null; // 错误后清空流式消息
+    } else {
+      // 更新流式消息
+      streamingMessage = updateStreamingMessage(state, ev);
+    }
+    return { ...state, log, running, messages, error, streamingMessage };
   }
   // subagent events: update the subagent entry + accumulate its live events
   const idx = state.subagents.findIndex((a) => a.name === ev.agent);
-  if (idx < 0 && ev.type !== 'delegate_start') return state;
+  // 用户正在查看这个子代理时，即使该 agent 还没出现在列表里（首次 delegate_start 前），
+  // 也要累积实时事件到 subagentMessages。
+  let subagentMessages = state.subagentMessages;
+  if (state.viewingSubagent === ev.agent) {
+    if (ev.type === 'done' && ev.message.role === 'assistant') {
+      subagentMessages = [...subagentMessages, ev.message];
+    } else if (ev.type !== 'done' && ev.type !== 'error') {
+      subagentMessages = [...subagentMessages, ev];
+    }
+  }
+  if (idx < 0 && ev.type !== 'delegate_start') return { ...state, subagentMessages };
   let subagents: SubagentInfo[];
   if (idx < 0) {
     subagents = [...state.subagents, { name: ev.agent!, task: (ev as { task?: string }).task ?? '', status: 'running', messageCount: 0, loadedSkills: [], events: [ev] }];
@@ -57,7 +180,7 @@ export function applyEnvelope(state: UiState, env: EventEnvelope): UiState {
       }
     });
   }
-  return { ...state, subagents };
+  return { ...state, subagents, subagentMessages };
 }
 
 export function mergeSnapshot(state: UiState, snap: SnapshotPayload): UiState {
@@ -73,5 +196,8 @@ export function mergeSnapshot(state: UiState, snap: SnapshotPayload): UiState {
     running: snap.running,
     log: [...snap.log],
     pendingPermission: snap.pendingPermission,
+    error: null,
+    streamingMessage: null, // 快照重置时清空流式消息
+    // viewingSubagent 和 subagentMessages 保持不变——快照重置不应打断用户的子代理浏览。
   };
 }

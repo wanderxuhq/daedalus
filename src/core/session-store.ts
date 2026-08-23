@@ -2,12 +2,32 @@ import { mkdir, readdir, readFile, writeFile, rename, rm } from 'node:fs/promise
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import type { SessionState } from './session.ts';
+import type { Message } from '../ai/types.ts';
 
 export interface SessionMeta {
   id: string;
   updatedAt: string;
   title: string;
   messageCount: number;
+}
+
+/** Backend SubagentInfo — mirrors the web state-model version but lives server-side. */
+export interface SubagentInfo {
+  name: string;
+  task: string;
+  status: 'running' | 'done' | 'error' | 'queued';
+  messageCount: number;
+  loadedSkills: string[];
+}
+
+/** On-disk shape for a persisted subagent. */
+interface StoredSubagent {
+  name: string;
+  task: string;
+  status: SubagentInfo['status'];
+  loadedSkills: string[];
+  messages: Message[];
+  updatedAt: string;
 }
 
 export interface StoredSession extends SessionState {

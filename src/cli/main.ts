@@ -8,13 +8,24 @@ import { SessionStore } from '../core/session-store.ts';
 import type { SessionState } from '../core/session.ts';
 import { runRepl } from './repl.ts';
 import { runSetupWizard } from './setup.ts';
-import { ANSI, renderEvent } from './render.ts';
+import { ANSI, renderEvent, streamAnswerOnly } from './render.ts';
 import { parseFlags } from './flags.ts';
+import { runOnce } from './once.ts';
 import { main as webMain } from '../server/server.ts';
 
 const flags = parseFlags(process.argv.slice(2));
 if (flags.help) {
-  console.log('daedalus — a terminal agent\n\nUsage: daedalus [--provider openai|anthropic] [--model M] [--base-url URL] [--resume [id]] [--auto]\n\n--auto auto-approves tool permissions (bash/write run without y/n prompts).\nExtended thinking is ON by default; disable with DAEDALUS_THINKING=0 or "thinking": false in config.\n\nConfig: ~/.daedalus/config.json and DAEDALUS_* env vars. First run starts an interactive setup.');
+  console.log('daedalus — a terminal agent\n\nUsage: daedalus [--provider openai|anthropic] [--model M] [--base-url URL] [--resume [id]] [--auto] [-p PROMPT] [--output-format text|json] [--version]\n\n--auto auto-approves tool permissions (bash/write run without y/n prompts).\n-p/--prompt runs one prompt and exits (scripts/CI); combine with --output-format json for machine-readable output.\nExtended thinking is ON by default; disable with DAEDALUS_THINKING=0 or "thinking": false in config.\n\nConfig: ~/.daedalus/config.json and DAEDALUS_* env vars. First run starts an interactive setup.');
+  process.exit(0);
+}
+if (flags.version) {
+  const { readFileSync } = await import('node:fs');
+  try {
+    const pkg = JSON.parse(readFileSync(new URL('../../package.json', import.meta.url), 'utf8')) as { version?: string };
+    console.log(`daedalus ${pkg.version ?? '(unknown)'}`);
+  } catch {
+    console.log('daedalus (unknown version)');
+  }
   process.exit(0);
 }
 
@@ -51,22 +62,28 @@ const store = new SessionStore();
 let initialState: SessionState | undefined;
 let sessionId: string | undefined;
 if (flags.resume) {
-  const meta = flags.resume === '1' ? await store.latest() : { id: flags.resume };
-  if (meta) {
-    try {
+  try {
+    // latest() lives OUTSIDE the load try below: a store failure (unreadable
+    // sessions dir, corrupt listing) must be reported cleanly, not crash with
+    // an unhandled rejection and a raw stack trace.
+    const meta = flags.resume === '1' ? await store.latest() : { id: flags.resume };
+    if (meta) {
       const loaded = await store.load(meta.id);
       initialState = { messages: loaded.messages, loadedSkills: loaded.loadedSkills };
       sessionId = loaded.id; // continue writing to the resumed session's file
-      console.log(`${ANSI.dim}resumed session ${loaded.id} (${loaded.messages.length} messages)${ANSI.reset}`);
-    } catch (e) {
-      console.error(`${ANSI.red}Failed to resume: ${(e as Error).message}${ANSI.reset}`);
+      if (flags.prompt === undefined) console.log(`${ANSI.dim}resumed session ${loaded.id} (${loaded.messages.length} messages)${ANSI.reset}`);
+    } else {
+      console.error(`${ANSI.red}No sessions to resume — run a conversation first. Sessions are saved to ${store.dir} after each run; /sessions lists them.${ANSI.reset}`);
     }
-  } else {
-    console.error(`${ANSI.red}No session to resume.${ANSI.reset}`);
+  } catch (e) {
+    console.error(`${ANSI.red}Failed to resume: ${(e as Error).message}${ANSI.reset}`);
   }
 }
 
-console.log(`${ANSI.bold}Daedalus${ANSI.reset} — agent ready (${config.provider}${config.model ? ` / ${config.model}` : ''})`);
+// Single-shot mode keeps stdout clean for the prompt's own output.
+if (flags.prompt === undefined) {
+  console.log(`${ANSI.bold}Daedalus${ANSI.reset} — agent ready (${config.provider}${config.model ? ` / ${config.model}` : ''})`);
+}
 const engine = new DaedalusEngine({
   client,
   cwd: process.cwd(),
@@ -76,8 +93,44 @@ const engine = new DaedalusEngine({
   maxContextTokens: base.maxContextTokens,
   thinking: base.thinking,
   thinkingBudgetTokens: base.thinkingBudgetTokens,
+  model: config.model,
+  ...(base.hooks ? { hooks: base.hooks } : {}),
 });
-engine.subscribe(renderEvent);
 const autoApprove = flags.auto === '1' || base.autoApprove === true;
+
+// Single-shot mode: `-p "prompt"` runs once and exits — the script/CI interface.
+// `--output-format json` keeps stdout clean: exactly one JSON object on success.
+if (flags.prompt !== undefined) {
+  if (flags.prompt === '') {
+    console.error('daedalus: -p/--prompt requires a non-empty prompt');
+    process.exit(2);
+  }
+  const json = flags.outputFormat === 'json';
+  if (flags.outputFormat !== undefined && flags.outputFormat !== 'text' && flags.outputFormat !== 'json') {
+    console.error('daedalus: --output-format must be "text" or "json"');
+    process.exit(2);
+  }
+  // Text mode streams ONLY the final answer's text deltas to stdout — no
+  // thinking, no tool cards, no banner — so `-p` output is the answer alone
+  // (script/CI friendly). `hasOutput()` guards the fallback: an adapter that
+  // puts the answer solely in the terminal 'done' still gets it printed once.
+  const answer = streamAnswerOnly();
+  const unsub = json ? undefined : engine.subscribe(answer.handler);
+  const res = await runOnce(engine, flags.prompt);
+  unsub?.();
+  if (json) {
+    console.log(JSON.stringify(res));
+  } else if (res.status === 'ok') {
+    if (answer.hasOutput()) process.stdout.write('\n');
+    else if (res.result) process.stdout.write(`${res.result}\n`);
+  } else {
+    console.error(`${ANSI.red}✗ ${res.error}${ANSI.reset}`);
+  }
+  await engine.dispose();
+  process.exit(res.status === 'ok' ? 0 : 1);
+}
+
+// Interactive REPL with stream renderer.
+engine.subscribe(renderEvent);
 await runRepl(engine, { autoApprove });
 await engine.dispose();

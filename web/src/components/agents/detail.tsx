@@ -4,6 +4,7 @@ import { getSubagentMessages } from '../../api.ts';
 import { Badge } from '../common/badge.tsx';
 import { ToolCard } from '../chat/tool-card.tsx';
 import { Thinking } from '../chat/thinking.tsx';
+import { t } from '../../i18n.ts';
 
 export function AgentDetail(props: { name: string }) {
   const agent = () => state().subagents.find((a) => a.name === props.name);
@@ -14,7 +15,7 @@ export function AgentDetail(props: { name: string }) {
   });
   return (
     <div class="agent-detail">
-      <a class="back" href="#/">← 返回</a>
+      <a class="back" href="#/">{t('agent.back')}</a>
       <h2>subagent: {props.name}</h2>
       <Show when={agent()}>
         {(a) => (
@@ -24,7 +25,8 @@ export function AgentDetail(props: { name: string }) {
               <span class="agent-task">{a().task}</span>
             </div>
             <div class="agent-events">
-              <For each={history()}>
+              {/* 子代理会话同样以 role:'system' 存自己的提示词 —— 不渲染。 */}
+              <For each={history().filter((m: any) => m.role !== 'system')}>
                 {(m: any) => (
                   <For each={m.content}>
                     {(c: any) => (
@@ -54,7 +56,7 @@ export function AgentDetail(props: { name: string }) {
         )}
       </Show>
       <div class="agent-interaction reserved">
-        <span>agent 间交流：待开放</span>
+        <span>{t('agent.interAgent')}</span>
       </div>
     </div>
   );

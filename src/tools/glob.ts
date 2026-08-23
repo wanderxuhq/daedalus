@@ -1,6 +1,7 @@
 import { promises as fs } from 'node:fs';
 import { isAbsolute, join } from 'node:path';
 import type { Tool, ToolContext, ToolResult } from './types.ts';
+import { truncateResult } from './output.ts';
 
 const IGNORE = new Set(['node_modules', '.git']);
 
@@ -35,6 +36,7 @@ export const globTool: Tool = {
     }
     await walk(root, '');
     const matches = all.filter((f) => matchesGlob(pattern, f));
-    return { content: matches.join('\n') || '(no matches)' };
+    const { content } = await truncateResult(matches.join('\n') || '(no matches)');
+    return { content };
   },
 };

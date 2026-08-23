@@ -1,5 +1,6 @@
 import { createSignal, For, Show } from 'solid-js';
 import { listSessions } from '../../api.ts';
+import { t } from '../../i18n.ts';
 
 interface SessionRow { id: string; title: string; updatedAt: string; messageCount: number }
 
@@ -15,14 +16,14 @@ export function ChatInput(props: { disabled: boolean; autoApprove: boolean; onSe
       const s = await listSessions();
       setSessions(s);
     } catch (e) {
-      setSessionsError('加载会话列表失败');
+      setSessionsError(t('input.loadFailed'));
     }
   };
 
   const submit = () => {
-    const t = text().trim();
-    if (!t || props.disabled) return;
-    props.onSend(t);
+    const val = text().trim();
+    if (!val || props.disabled) return;
+    props.onSend(val);
     setText('');
   };
 
@@ -38,7 +39,7 @@ export function ChatInput(props: { disabled: boolean; autoApprove: boolean; onSe
       <Show when={showSessions()}>
         <div class="sessions-popup">
           <div class="sessions-popup-header">
-            <span>恢复对话</span>
+            <span>{t('input.restoreSession')}</span>
             <button class="close-btn" onClick={() => setShowSessions(false)}>×</button>
           </div>
           <Show
@@ -46,14 +47,14 @@ export function ChatInput(props: { disabled: boolean; autoApprove: boolean; onSe
             fallback={
               <Show
                 when={sessions().length > 0}
-                fallback={<div class="sessions-empty">暂无会话</div>}
+                fallback={<div class="sessions-empty">{t('input.noSessions')}</div>}
               >
                 <ul class="sessions-popup-list">
                   <For each={sessions()}>
                     {(s) => (
                       <li class="sessions-popup-item" onClick={() => onResume(s.id)}>
                         <span class="session-title">{s.title}</span>
-                        <span class="session-meta">{new Date(s.updatedAt).toLocaleString()} · {s.messageCount} 条</span>
+                        <span class="session-meta">{new Date(s.updatedAt).toLocaleString()} · {s.messageCount} {t('sessions.items')}</span>
                       </li>
                     )}
                   </For>
@@ -70,20 +71,20 @@ export function ChatInput(props: { disabled: boolean; autoApprove: boolean; onSe
           const next = !showSessions();
           setShowSessions(next);
           if (next) loadSessions();
-        }} title="恢复对话">
+        }} title={t('input.restoreSession')}>
           ↺
         </button>
         <textarea
           rows={1}
           value={text()}
-          placeholder={props.disabled ? '运行中…' : '输入消息'}
+          placeholder={props.disabled ? t('input.running') : t('input.placeholder')}
           onInput={(e) => setText((e.target as HTMLTextAreaElement).value)}
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
           }}
         />
         <button class="send-btn" onClick={submit} disabled={props.disabled}>⏎</button>
-        <button class="auto-toggle" classList={{ 'auto-on': props.autoApprove }} onClick={props.onToggleAuto} title="权限模式切换">
+        <button class="auto-toggle" classList={{ 'auto-on': props.autoApprove }} onClick={props.onToggleAuto} title={t('input.togglePermission')}>
           {props.autoApprove ? 'auto' : 'ask'}
         </button>
       </div>

@@ -54,6 +54,26 @@ test('thinking enabled adds a thinking block with budget and drops temperature',
   assert.equal(custom.max_tokens, 2049); // bumped above budget
 });
 
+test('usage: message_start input + cache tokens, message_delta output tokens', () => {
+  const events = anthropicEventsToIR([
+    { type: 'message_start', message: { id: 'm1', usage: { input_tokens: 100, output_tokens: 0, cache_creation_input_tokens: 10, cache_read_input_tokens: 20 } } },
+    { type: 'message_delta', delta: { stop_reason: 'end_turn' }, usage: { output_tokens: 45 } },
+  ]);
+  const usageEvents = events.filter((e) => e.type === 'usage');
+  assert.deepEqual(usageEvents, [
+    { type: 'usage', inputTokens: 130, outputTokens: 0 },   // 100 input + 10 created + 20 read
+    { type: 'usage', inputTokens: 0, outputTokens: 45 },    // streamed output
+  ]);
+});
+
+test('usage: no usage payloads yield no usage events', () => {
+  const events = anthropicEventsToIR([
+    { type: 'message_start', message: { id: 'm1' } },
+    { type: 'message_stop' },
+  ]);
+  assert.equal(events.some((e) => e.type === 'usage'), false);
+});
+
 test('tool_result turns after thinking prepend redacted_thinking signatures', () => {
   const messages: Message[] = [
     { role: 'assistant', content: [

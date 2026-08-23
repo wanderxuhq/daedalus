@@ -18,4 +18,16 @@ export function registerAgentRoutes(http: HttpServer, engine: DaedalusEngine): v
     engine.closeSubagent(name);
     return { ok: true };
   });
+
+  /** POST /api/agents/chat — inject a user message into a subagent's session. */
+  http.post('/api/agents/chat', async (_req, body) => {
+    if (typeof body !== 'object' || body === null) throw new HttpError(400, 'missing body');
+    const { name, prompt } = body as { name?: unknown; prompt?: unknown };
+    if (typeof name !== 'string' || !name) throw new HttpError(400, 'name required');
+    if (typeof prompt !== 'string' || !prompt.trim()) throw new HttpError(400, 'prompt required');
+    engine.injectSubagentMessage(name, prompt);
+    return { status: 'ok' };
+  });
+
+undefined
 }

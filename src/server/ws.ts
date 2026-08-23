@@ -52,7 +52,9 @@ export class WebSocketHub {
   private snapshot(): SnapshotPayload {
     const running = !TERMINALS.has(this.log[this.log.length - 1]?.type ?? 'done');
     return {
-      messages: this.engine.getSessionState().messages,
+      // 系统提示词存在会话消息里（role:'system'），但快照是 UI 数据 —— 下发它会让
+      // 浏览器把模型指令渲染成聊天气泡。这里在源头剔除，前端不再各自防御。
+      messages: this.engine.getSessionState().messages.filter((m) => m.role !== 'system'),
       subagents: this.hub.list(),
       running,
       log: [...this.log],
@@ -72,6 +74,11 @@ export class WebSocketHub {
 
   broadcastEvent(ev: CoreEvent): void {
     this.hub.handle(ev);
+    // 子代理事件不进入主会话日志，也不触发主会话终止逻辑。
+    if (ev.agent !== undefined) {
+      for (const c of this.clients) this.sendEvent(c, ev);
+      return;
+    }
     if (TERMINALS.has(ev.type)) {
       this.log = [];
       this.permission.clearAll();

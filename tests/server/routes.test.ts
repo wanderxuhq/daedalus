@@ -32,6 +32,7 @@ function fakeEngine(over: Partial<{
     getAutoApprove: () => over.autoApprove ?? false, setAutoApprove: () => {},
     getPlanMode: () => false, setPlanMode: () => {},
     usage: () => ({ inputTokens: 0, outputTokens: 0 }),
+    injectSubagentMessage: () => {},
   } as unknown as DaedalusEngine;
 }
 
@@ -101,6 +102,30 @@ test('PUT /api/sessions/rename calls store.rename with id+title', async () => {
     assert.deepEqual(renamed, { id: 's1', title: 'New' });
   });
 });
+
+test('POST /api/agents/chat injects a message into a subagent session', async () => {
+  let injected: { name: string; prompt: string } | null = null;
+  const engine = fakeEngine();
+  engine.injectSubagentMessage = (name: string, prompt: string) => { injected = { name, prompt }; };
+  await withRoutes(engine, fakeStore(), {}, async (base) => {
+    const res = await fetch(`${base}/api/agents/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'worker', prompt: 'do it' }) });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { status: 'ok' });
+    assert.deepEqual(injected, { name: 'worker', prompt: 'do it' });
+  });
+});
+
+test('POST /api/agents/chat returns 400 without name or prompt', async () => {
+  const engine = fakeEngine();
+  await withRoutes(engine, fakeStore(), {}, async (base) => {
+    const noName = await fetch(`${base}/api/agents/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ prompt: 'hi' }) });
+    assert.equal(noName.status, 400);
+    const noPrompt = await fetch(`${base}/api/agents/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'w' }) });
+    assert.equal(noPrompt.status, 400);
+  });
+});
+
+
 
 test('GET /api/config returns engine state; PUT /api/config toggles autoApprove', async () => {
   let auto = false;

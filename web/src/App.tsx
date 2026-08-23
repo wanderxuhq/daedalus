@@ -12,6 +12,7 @@ import { SubagentPanel } from './components/agents/panel.tsx';
 import { AgentDetail } from './components/agents/detail.tsx';
 import { Drawer } from './components/common/drawer.tsx';
 import { SessionList } from './components/sessions/list.tsx';
+import { t } from './i18n.ts';
 
 export function App() {
   const isNarrow = useIsNarrow();
@@ -67,7 +68,7 @@ export function App() {
           <Badge status={state().running ? 'running' : 'done'} />
           <span class={`ws-dot ${wsStatus()}`} />
         </header>
-        <Show when={wsStatus() !== 'open'}><div class="reconnect-banner">连接断开，重连中…</div></Show>
+        <Show when={wsStatus() !== 'open'}><div class="reconnect-banner">{t('app.reconnect')}</div></Show>
         <div class="main">
           <div class="chat-stream">
             <For each={state().messages}>
