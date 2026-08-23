@@ -1,5 +1,5 @@
 import { createSignal, createEffect, For, Show } from 'solid-js';
-import { state, handleEnvelope, setAutoApproveLocal, submitPrompt } from './stores.ts';
+import { state, handleEnvelope, setAutoApproveLocal, submitPrompt, removeLastUserMessage } from './stores.ts';
 import { AiError } from '../../src/ai/errors.ts';
 import { chat, resumeSession, putConfig, getConfig } from './api.ts';
 import { connectWs, sendWsMessage, type WsStatus } from './ws.ts';
@@ -36,6 +36,10 @@ export function App() {
     if (result.status === 'error') {
       // POST 失败时显示错误（ws 不会收到事件）
       handleEnvelope({ type: 'event', ev: { type: 'error', error: new AiError('server', result.error) } });
+      // 如果是 409 错误（运行中），回滚用户消息
+      if (result.error.includes('already in progress')) {
+        removeLastUserMessage();
+      }
     }
   };
   const onToggleAuto = async () => {

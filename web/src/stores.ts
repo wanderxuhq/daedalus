@@ -42,3 +42,17 @@ export function setSubagentMessages(msgs: unknown[]): void {
 export function submitSubagentPrompt(prompt: string): void {
   setState((s) => submitSubagentPromptModel(s, prompt));
 }
+
+/** 移除最后一个用户消息（POST 失败时回滚）。 */
+export function removeLastUserMessage(): void {
+  setState((s) => {
+    const messages = [...s.messages];
+    for (let i = messages.length - 1; i >= 0; i--) {
+      if ((messages[i] as any).role === 'user') {
+        messages.splice(i, 1);
+        return { ...s, messages };
+      }
+    }
+    return s;
+  });
+}
