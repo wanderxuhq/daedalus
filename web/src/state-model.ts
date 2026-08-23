@@ -186,7 +186,11 @@ export function applyEnvelope(state: UiState, env: EventEnvelope): UiState {
 export function mergeSnapshot(state: UiState, snap: SnapshotPayload): UiState {
   return {
     ...state,
-    messages: snap.messages,
+    // 过滤掉不含文本内容的 user 消息（仅包含 tool_result 的消息），
+    // 保持与 live session 行为一致——这些消息在实时流中不会出现在渲染列表中。
+    messages: snap.messages.filter((m: any) =>
+      m.role !== 'user' || m.content.some((c: any) => c.type === 'text'),
+    ),
     subagents: snap.subagents.map((a) => ({
       name: a.name, task: a.task,
       status: (a.status === 'done' || a.status === 'error' ? a.status : 'running') as SubagentInfo['status'],
