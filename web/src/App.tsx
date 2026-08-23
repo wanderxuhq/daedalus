@@ -1,5 +1,6 @@
 import { createSignal, createEffect, For, Show } from 'solid-js';
-import { state, handleEnvelope, setAutoApproveLocal } from './stores.ts';
+import { state, handleEnvelope, setAutoApproveLocal, submitPrompt } from './stores.ts';
+import { AiError } from '../../src/ai/errors.ts';
 import { chat, resumeSession, putConfig, getConfig } from './api.ts';
 import { connectWs, sendWsMessage, type WsStatus } from './ws.ts';
 import { parseHash, onHashChange, type Route } from './routes.ts';
@@ -30,7 +31,12 @@ export function App() {
   createEffect(() => { void getConfig().then((c) => setAutoApproveLocal(c.autoApprove)).catch(() => {}); });
 
   const onSend = async (prompt: string) => {
-    await chat(prompt); // 结果通过 ws 事件回流
+    submitPrompt(prompt); // 本地立即回显 user 消息
+    const result = await chat(prompt); // 结果通过 ws 事件回流
+    if (result.status === 'error') {
+      // POST 失败时显示错误（ws 不会收到事件）
+      handleEnvelope({ type: 'event', ev: { type: 'error', error: new AiError('server', result.error) } });
+    }
   };
   const onToggleAuto = async () => {
     const next = !state().autoApprove;
@@ -74,6 +80,9 @@ export function App() {
             <For each={state().messages}>
               {(m) => <MessageBubble message={m} />}
             </For>
+            <Show when={state().streamingMessage}>
+              {(sm) => <MessageBubble message={sm()} />}
+            </Show>
             <Show when={state().pendingPermission}>
               <PermissionCard pending={state().pendingPermission} send={(m) => sendWsMessage(m)} />
             </Show>
