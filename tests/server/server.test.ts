@@ -77,8 +77,8 @@ test('buildServer wires engine events to ws and permission round-trip', async ()
 
   // subscribed handler feeds broadcastEvent: hub.handle tracks subagents
   subscribed!({ type: 'delegate_start', agent: 'scout', task: 'explore' });
-  // 子代理事件不进主会话 log（独立上下文），只广播给客户端。
-  assert.equal((srv.hub as any).log.length, 0, 'subagent events do not pollute the main log');
+  // 子代理事件进入 log 以便断线重连时通过 snapshot 恢复
+  assert.equal((srv.hub as any).log.length, 1, 'subagent events are stored in the log for reconnect recovery');
   assert.equal(srv.permission.pending(), null);
 
   await srv.close();

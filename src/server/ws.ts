@@ -45,7 +45,9 @@ export class WebSocketHub {
     http.ws('/api/ws', (ws) => {
       this.clients.add(ws);
       ws.send(JSON.stringify({ type: 'snapshot', ...this.snapshot() }));
-      for (const ev of this.log) this.sendEvent(ws, ev);
+
+      // Silently swallow errors; the close event handles cleanup.
+      ws.on('error', () => {});
 
       // Heartbeat: periodic ping + pong timeout
       let alive = true;
@@ -99,6 +101,7 @@ export class WebSocketHub {
     this.hub.handle(ev);
     // Subagent events don't enter the main session log or trigger main session termination logic.
     if (ev.agent !== undefined) {
+      this.log.push(ev);
       for (const c of this.clients) this.sendEvent(c, ev);
       return;
     }

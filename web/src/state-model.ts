@@ -148,7 +148,7 @@ export function applyEnvelope(state: UiState, env: EventEnvelope): UiState {
       // 更新流式消息
       streamingMessage = updateStreamingMessage(state, ev);
     }
-    return { ...state, log, running, messages, error, streamingMessage };
+    return { ...state, log, running, messages, error, streamingMessage, pendingPermission: TERMINALS.has(ev.type) ? null : state.pendingPermission };
   }
   // subagent events: update the subagent entry + accumulate its live events
   const idx = state.subagents.findIndex((a) => a.name === ev.agent);
