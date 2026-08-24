@@ -205,6 +205,7 @@ test('engine end-to-end: a delegated task leaves no subagent steps in the main s
     askPermission: (async () => true) as (action: string, target: string) => Promise<boolean>,
     skillDirs: [],
     maxIterations: 5,
+    enableAutoSummary: false, // Disable for testing
   });
   const result = await engine.run('audit the docs');
   assert.equal(result, 'docs audited');
@@ -655,6 +656,7 @@ test('engine injectSubagentMessage adds to pending queue and starts loop if not 
     askPermission: (async () => true) as (action: string, target: string) => Promise<boolean>,
     skillDirs: [],
     maxIterations: 5,
+    enableAutoSummary: false, // Disable for testing
   });
   // Inject message to a non-existent subagent (should create session and start loop)
   engine.injectSubagentMessage('test-agent', 'hello');
@@ -686,6 +688,7 @@ test('engine injectSubagentMessage does not restart loop if already running', as
     askPermission: (async () => true) as (action: string, target: string) => Promise<boolean>,
     skillDirs: [],
     maxIterations: 5,
+    enableAutoSummary: false, // Disable for testing
   });
   // Start first loop by injecting message
   engine.injectSubagentMessage('test-agent', 'first message');

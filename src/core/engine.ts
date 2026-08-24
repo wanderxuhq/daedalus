@@ -71,6 +71,11 @@ export interface EngineOptions {
    * Defaults to a fresh one per engine; inject for tests or multi-engine setups.
    */
   locks?: FileLockRegistry;
+  /**
+   * Enable automatic summarization of main conversation history for subagent context.
+   * Default: true. Set to false to disable (useful for testing).
+   */
+  enableAutoSummary?: boolean;
 }
 
 export class DaedalusEngine {
@@ -193,6 +198,10 @@ export class DaedalusEngine {
       // Track subagent lifecycle so injectSubagentMessage doesn't duplicate loops
       onSubagentStart: (name: string) => { this.runningSubagents.add(name); },
       onSubagentEnd: (name: string) => { this.runningSubagents.delete(name); },
+      // Provide access to main conversation history for context summarization
+      getMainHistory: () => this.session.getMessages(),
+      // Enable automatic summarization of main history for subagent context
+      enableAutoSummary: opts.enableAutoSummary !== false,
     };
     // Store delegate options for restarting subagents when user sends messages.
     this.delegateOptions = delegateOptions;

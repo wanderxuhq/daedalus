@@ -24,12 +24,57 @@ const COMPACT_SYSTEM = [
   'Write in the same language as the conversation. Be information-dense but concise. Output ONLY the summary text, no preamble or headings.',
 ].join('\n');
 
+/** Instructions for task-specific summarization. Focuses on information relevant to the delegated task. */
+function buildTaskSummarySystem(task: string): string {
+  return [
+    'You are a conversation summarizer for a coding agent.',
+    'The agent is about to delegate this task to a subagent:',
+    `"${task}"`,
+    '',
+    'Summarize the conversation history, focusing on information relevant to this task.',
+    'Preserve:',
+    '- Relevant file paths and their contents/structure',
+    '- Related decisions and reasoning',
+    '- Previous findings that might be useful',
+    '- Constraints or preferences that apply',
+    '- Any work already completed that relates to this task',
+    '',
+    'Write in the same language as the conversation. Be information-dense but concise.',
+    'Output ONLY the summary text, no preamble or headings.',
+  ].join('\n');
+}
+
 /** Ask the same model to compress a span of whole turns into one summary. */
 export async function summarizeTurns(client: AiClient, turns: Message[]): Promise<string> {
   const system: Message = { role: 'system', content: [{ type: 'text', text: COMPACT_SYSTEM }] };
   let text = '';
   for await (const ev of client.streamChat({
     messages: [system, ...turns],
+    tools: [],
+    cache: { enabled: false },
+    maxTokens: 1024,
+  })) {
+    if (ev.type === 'text_delta') text += ev.text;
+    if (ev.type === 'error') throw ev.error;
+  }
+  return text.trim();
+}
+
+/**
+ * Summarize the main conversation history with focus on a specific task.
+ * This summary is injected into the subagent's context to avoid redundant work.
+ */
+export async function summarizeMainForTask(
+  client: AiClient, 
+  mainHistory: Message[], 
+  task: string
+): Promise<string> {
+  if (mainHistory.length === 0) return '';
+  
+  const system: Message = { role: 'system', content: [{ type: 'text', text: buildTaskSummarySystem(task) }] };
+  let text = '';
+  for await (const ev of client.streamChat({
+    messages: [system, ...mainHistory],
     tools: [],
     cache: { enabled: false },
     maxTokens: 1024,

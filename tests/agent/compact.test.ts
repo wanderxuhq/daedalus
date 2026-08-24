@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { compactHistory, summarizeTurns } from '../../src/agent/compact.ts';
+import { compactHistory, summarizeTurns, summarizeMainForTask } from '../../src/agent/compact.ts';
 import type { Message } from '../../src/ai/types.ts';
 import type { AiClient } from '../../src/ai/types.ts';
 
@@ -130,4 +130,70 @@ test('summarizeTurns throws on a provider error event', async () => {
     },
   };
   await assert.rejects(() => summarizeTurns(client, [user('x')]), /boom/);
+});
+
+// Tests for summarizeMainForTask
+
+test('summarizeMainForTask returns empty string for empty history', async () => {
+  const client: AiClient = {
+    async *streamChat() {
+      yield { type: 'text_delta', text: 'should not be called' };
+    },
+  };
+  const summary = await summarizeMainForTask(client, [], 'test task');
+  assert.equal(summary, '');
+});
+
+test('summarizeMainForTask sends task-specific system prompt', async () => {
+  const task = 'Analyze the performance of function X';
+  const client: AiClient = {
+    async *streamChat(params) {
+      const system = params.messages.find((m) => m.role === 'system');
+      const sysText = system?.content.find((c) => c.type === 'text');
+      assert.ok(sysText && sysText.type === 'text');
+      assert.ok(sysText.text.includes('conversation summarizer'));
+      assert.ok(sysText.text.includes(task));
+      yield { type: 'text_delta', text: 'Task summary' };
+    },
+  };
+  const summary = await summarizeMainForTask(client, [user('hello')], task);
+  assert.equal(summary, 'Task summary');
+});
+
+test('summarizeMainForTask forwards main history to model', async () => {
+  const mainHistory: Message[] = [user('first message'), asst('response 1'), user('second message')];
+  const client: AiClient = {
+    async *streamChat(params) {
+      // Check that main history is included after system prompt
+      const nonSystemMessages = params.messages.filter((m) => m.role !== 'system');
+      assert.equal(nonSystemMessages.length, mainHistory.length);
+      assert.deepEqual(nonSystemMessages, mainHistory);
+      yield { type: 'text_delta', text: 'summary' };
+    },
+  };
+  const summary = await summarizeMainForTask(client, mainHistory, 'test task');
+  assert.equal(summary, 'summary');
+});
+
+test('summarizeMainForTask trims whitespace from summary', async () => {
+  const client: AiClient = {
+    async *streamChat() {
+      yield { type: 'text_delta', text: '  summary with spaces  ' };
+    },
+  };
+  const summary = await summarizeMainForTask(client, [user('hello')], 'task');
+  assert.equal(summary, 'summary with spaces');
+});
+
+test('summarizeMainForTask throws on provider error', async () => {
+  const { AiError } = await import('../../src/ai/errors.ts');
+  const client: AiClient = {
+    async *streamChat() {
+      yield { type: 'error', error: new AiError('network', 'summary failed') };
+    },
+  };
+  await assert.rejects(
+    () => summarizeMainForTask(client, [user('hello')], 'task'),
+    /summary failed/
+  );
 });

@@ -118,6 +118,7 @@ test('consult e2e: clone answers from workerB history, workerB untouched, cache 
     askPermission: (async () => true) as (action: string, target: string) => Promise<boolean>,
     skillDirs: [],
     maxIterations: 5,
+    enableAutoSummary: false, // Disable for testing
   });
   const result = await engine.run('orchestrate');
   assert.equal(result, 'all done');
@@ -156,6 +157,7 @@ test('consult errors for an agent with no history and does not create one', asyn
     askPermission: (async () => true) as (action: string, target: string) => Promise<boolean>,
     skillDirs: [],
     maxIterations: 5,
+    enableAutoSummary: false, // Disable for testing
   });
   await engine.run('ask ghost');
   const msgs = engine.getSessionState().messages;

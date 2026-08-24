@@ -30,6 +30,7 @@ function opts(overrides: Partial<{
   mainAgentTools: string[];
   delegateMaxDepth: number;
   hooks: HookConfig;
+  enableAutoSummary: boolean;
 }> = {}) {
   return {
     client: overrides.client ?? textClient('ok'),
@@ -37,6 +38,7 @@ function opts(overrides: Partial<{
     askPermission: (async () => true) as (action: string, target: string) => Promise<boolean>,
     skillDirs: overrides.skillDirs ?? [],
     maxIterations: overrides.maxIterations ?? 2,
+    enableAutoSummary: overrides.enableAutoSummary ?? false, // Disable by default for testing
     ...(overrides.initialState ? { initialState: overrides.initialState } : {}),
     ...(overrides.sessionStore ? { sessionStore: overrides.sessionStore } : {}),
     ...(overrides.maxContextTokens !== undefined ? { maxContextTokens: overrides.maxContextTokens } : {}),

@@ -1,4 +1,4 @@
-import type { AiClient } from '../ai/types.ts';
+import type { AiClient, Message } from '../ai/types.ts';
 import type { Tool, ToolContext, ToolResult } from '../tools/types.ts';
 import { Session, SessionPool } from './session.ts';
 import { runAgent } from '../agent/loop.ts';
@@ -8,6 +8,7 @@ import type { CoreEvent } from './events.ts';
 import type { FileLockRegistry } from './file-lock.ts';
 import type { FileUndoRegistry } from './undo.ts';
 import { PLAN_BLOCKED_TOOLS } from '../tools/registry.ts';
+import { summarizeMainForTask } from '../agent/compact.ts';
 
 export interface DelegateToolOptions {
   client: AiClient;
@@ -48,6 +49,17 @@ export interface DelegateToolOptions {
   onSubagentStart?: (name: string) => void;
   /** Track subagent lifecycle: called when a subagent finishes (background mode). */
   onSubagentEnd?: (name: string) => void;
+  /** 
+   * Get the main conversation history for context summarization.
+   * When provided, the delegate tool will summarize the main history
+   * and inject it into the subagent's context to avoid redundant work.
+   */
+  getMainHistory?: () => import('../ai/types.ts').Message[];
+  /**
+   * Enable automatic summarization of main conversation history for subagent context.
+   * Default: true. Set to false to disable (useful for testing).
+   */
+  enableAutoSummary?: boolean;
 }
 
 export interface DelegateInput {
@@ -142,7 +154,22 @@ async function runOnce(opts: DelegateToolOptions, depth: number, args: DelegateI
     });
   }
 
+  // Summarize main conversation history for context injection
+  let contextSummary = '';
+  if (opts.enableAutoSummary !== false && opts.getMainHistory) {
+    try {
+      const mainHistory = opts.getMainHistory();
+      if (mainHistory.length > 0) {
+        contextSummary = await summarizeMainForTask(opts.client, mainHistory, args.task);
+      }
+    } catch (e) {
+      // Summary failure is non-fatal; proceed without context
+      console.warn('Failed to summarize main history:', e);
+    }
+  }
+
   const prompt = [
+    contextSummary ? `[Main conversation summary]\n\n${contextSummary}\n\n` : '',
     args.context ? `# Context\n\n${args.context}\n\n` : '',
     `# Task\n\n${args.task}`,
   ].join('');
