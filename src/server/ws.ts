@@ -22,15 +22,23 @@ export class WebSocketHub {
   private permission: WebPermissionManager;
   private log: CoreEvent[] = [];
   private clients = new Set<import('ws').WebSocket>();
+  /** Interval in ms between heartbeat pings sent to each client. */
+  private pingInterval: number;
+  /** Time in ms to wait for a pong response before closing a dead connection. */
+  private pingTimeout: number;
 
   constructor(opts: {
     engine: Pick<DaedalusEngine, 'getSessionState' | 'listSubagents' | 'getSubagentMessages'>;
     hub: EventHub;
     permission: WebPermissionManager;
+    pingInterval?: number;
+    pingTimeout?: number;
   }) {
     this.engine = opts.engine;
     this.hub = opts.hub;
     this.permission = opts.permission;
+    this.pingInterval = opts.pingInterval ?? 30_000;
+    this.pingTimeout = opts.pingTimeout ?? 10_000;
   }
 
   attach(http: HttpServer): void {
@@ -38,6 +46,21 @@ export class WebSocketHub {
       this.clients.add(ws);
       ws.send(JSON.stringify({ type: 'snapshot', ...this.snapshot() }));
       for (const ev of this.log) this.sendEvent(ws, ev);
+
+      // Heartbeat: periodic ping + pong timeout
+      let alive = true;
+      let pongTimer: ReturnType<typeof setTimeout> | undefined;
+      const pingTimer = setInterval(() => {
+        if (ws.readyState !== ws.OPEN) { clearInterval(pingTimer); return; }
+        alive = false;
+        ws.ping();
+        pongTimer = setTimeout(() => {
+          if (!alive) ws.close();
+        }, this.pingTimeout);
+      }, this.pingInterval);
+      ws.on('pong', () => { alive = true; if (pongTimer) { clearTimeout(pongTimer); pongTimer = undefined; } });
+      ws.on('close', () => { clearInterval(pingTimer); if (pongTimer) clearTimeout(pongTimer); });
+
       ws.on('message', (raw) => {
         let msg: { type?: string; id?: string; allow?: boolean; always?: boolean };
         try { msg = JSON.parse(raw.toString()); } catch { return; }

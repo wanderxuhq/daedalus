@@ -130,3 +130,50 @@ test('replays in-flight log events after snapshot', async () => {
     await http.close();
   }
 });
+
+test('heartbeat: server sends periodic pings to clients', async () => {
+  const http = new HttpServer({ staticDir: process.cwd() });
+  const hub = new WebSocketHub({
+    engine: fakeEngine() as any, hub: new EventHub(), permission: new WebPermissionManager(),
+    pingInterval: 200, pingTimeout: 200,
+  });
+  hub.attach(http);
+  let ws: WebSocket | undefined;
+  try {
+    ws = await connect(hub, http);
+    await nextMessage(ws, 'snapshot');
+    // Listen for ping frames from server (ws library auto-responds with pong)
+    const pingReceived = new Promise<void>((resolve) => {
+      ws!.once('ping', () => resolve());
+    });
+    await pingReceived;
+    // If we got here, the server sent a ping and we received it
+    assert.ok(true, 'received ping from server');
+  } finally {
+    ws?.close();
+    await http.close();
+  }
+});
+
+test('heartbeat: server closes connection after pong timeout', async () => {
+  const http = new HttpServer({ staticDir: process.cwd() });
+  const hub = new WebSocketHub({
+    engine: fakeEngine() as any, hub: new EventHub(), permission: new WebPermissionManager(),
+    pingInterval: 200, pingTimeout: 200,
+  });
+  hub.attach(http);
+  let ws: WebSocket | undefined;
+  try {
+    ws = await connect(hub, http);
+    await nextMessage(ws, 'snapshot');
+    // Suppress automatic pong by disabling _autoPong (ws v8 feature).
+    // The ws library responds to ping frames at the protocol level via this flag.
+    (ws as any)._autoPong = false;
+    // Wait for pingInterval + pingTimeout + buffer
+    await new Promise((r) => setTimeout(r, 700));
+    assert.equal(ws.readyState, WebSocket.CLOSED, 'connection should be closed after pong timeout');
+  } finally {
+    ws?.close();
+    await http.close();
+  }
+});
