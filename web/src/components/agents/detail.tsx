@@ -12,6 +12,13 @@ export function AgentDetail(props: { name: string }) {
     const name = props.name;
     void getSubagentMessages(name).then((ms) => setHistory(ms)).catch(() => {});
   });
+  // Re-fetch history when subagent completes to ensure we have the final message
+  createEffect(() => {
+    const a = agent();
+    if (a && a.status === 'done') {
+      void getSubagentMessages(props.name).then((ms) => setHistory(ms)).catch(() => {});
+    }
+  });
   return (
     <div class="agent-detail">
       <a class="back" href="#/">{t('agent.back')}</a>
