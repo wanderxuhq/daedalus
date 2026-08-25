@@ -29,7 +29,16 @@ export const editTool: Tool = {
       }
     }
     try {
-      const text = await fs.readFile(full, 'utf8');
+      let text: string;
+      try {
+        text = await fs.readFile(full, 'utf8');
+      } catch (e) {
+        const error = e as NodeJS.ErrnoException;
+        if (error.code === 'ENOENT') {
+          return { content: `ENOENT: no such file or directory, edit '${full}'`, isError: true };
+        }
+        throw e;
+      }
       const count = text.split(oldString).length - 1;
       if (count === 0) return { content: `oldString not found in ${full}`, isError: true };
       if (count > 1) return { content: `oldString matches ${count} times; not unique`, isError: true };

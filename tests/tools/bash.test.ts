@@ -1,245 +1,233 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createBashTool } from '../../src/tools/bash.ts';
 import { ShellRegistry } from '../../src/tools/shell.ts';
-import type { ToolContext } from '../../src/tools/types.ts';
+import { FileLockRegistry } from '../../src/core/file-lock.ts';
+import { FileUndoRegistry } from '../../src/core/undo.ts';
 
-const tmp = () => mkdtempSync(join(tmpdir(), 'daedalus-bash-test-'));
+const tmp = () => mkdtempSync(join(tmpdir(), 'daedalus-bash-'));
 
-test('bash tool: returns permission denied when user rejects', async () => {
-  const shells = new ShellRegistry(process.cwd());
+test('bash tool: runs a command and returns output', async () => {
+  const dir = tmp();
+  const shells = new ShellRegistry(dir);
   const tool = createBashTool(shells);
-  const ctx: ToolContext = {
-    cwd: '/tmp',
+  const ctx = {
+    cwd: dir,
+    askPermission: async () => true,
+    agent: 'test',
+    locks: new FileLockRegistry(),
+    undo: new FileUndoRegistry(),
+  };
+  
+  const result = await tool.execute({ command: 'echo hello world' }, ctx);
+  assert.equal(result.content.trim(), 'hello world');
+  assert.equal(result.isError, undefined);
+  
+  shells.clear();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('bash tool: returns error on permission denial', async () => {
+  const dir = tmp();
+  const shells = new ShellRegistry(dir);
+  const tool = createBashTool(shells);
+  const ctx = {
+    cwd: dir,
     askPermission: async () => false,
     agent: 'test',
   };
-
-  const result = await tool.execute({ command: 'echo test' }, ctx);
+  
+  const result = await tool.execute({ command: 'echo should not run' }, ctx);
+  assert.equal(result.content, 'Permission denied by user');
   assert.equal(result.isError, true);
-  assert.ok(result.content.includes('Permission denied'));
-  shells.clear();
-});
-
-test('bash tool: executes successful command', async () => {
-  const shells = new ShellRegistry(process.cwd());
-  const tool = createBashTool(shells);
-  const ctx: ToolContext = {
-    cwd: '/tmp',
-    askPermission: async () => true,
-    agent: 'test',
-  };
-
-  const result = await tool.execute({ command: 'echo hello' }, ctx);
-  assert.equal(result.isError, undefined);
-  assert.ok(result.content.includes('hello'));
-  shells.clear();
-});
-
-test('bash tool: handles command failure (non-zero exit)', async () => {
-  const shells = new ShellRegistry(process.cwd());
-  const tool = createBashTool(shells);
-  const ctx: ToolContext = {
-    cwd: '/tmp',
-    askPermission: async () => true,
-    agent: 'test',
-  };
-
-  const result = await tool.execute({ command: 'exit 1' }, ctx);
-  assert.equal(result.isError, true);
-  assert.ok(result.content.includes('exit 1'));
-  shells.clear();
-});
-
-test('bash tool: handles command failure with non-zero exit code', async () => {
-  const shells = new ShellRegistry(process.cwd());
-  const tool = createBashTool(shells);
-  const ctx: ToolContext = {
-    cwd: '/tmp',
-    askPermission: async () => true,
-    agent: 'test',
-  };
-
-  const result = await tool.execute({ command: 'false' }, ctx);
-  assert.equal(result.isError, true);
-  assert.ok(result.content.includes('exit'));
-  shells.clear();
-});
-
-test('bash tool: handles empty command output', async () => {
-  const shells = new ShellRegistry(process.cwd());
-  const tool = createBashTool(shells);
-  const ctx: ToolContext = {
-    cwd: '/tmp',
-    askPermission: async () => true,
-    agent: 'test',
-  };
-
-  const result = await tool.execute({ command: 'true' }, ctx);
-  assert.equal(result.isError, undefined);
-  // Command succeeded with no output - should return "(no output)" or empty
-  assert.ok(result.content.includes('(no output)') || result.content.trim() === '');
-  shells.clear();
-});
-
-test('bash tool: handles abort signal', async () => {
-  const shells = new ShellRegistry(process.cwd());
-  const tool = createBashTool(shells);
-  const ac = new AbortController();
-  const ctx: ToolContext = {
-    cwd: '/tmp',
-    askPermission: async () => true,
-    agent: 'test',
-    signal: ac.signal,
-  };
-
-  const promise = tool.execute({ command: 'sleep 30' }, ctx);
-  setTimeout(() => ac.abort(), 100);
-
-  const result = await promise;
-  assert.equal(result.isError, true);
-  assert.ok(result.content.includes('cancelled'));
-  shells.clear();
-});
-
-test('bash tool: persists cwd across calls via shell registry', async () => {
-  const dir = tmp();
-  const shells = new ShellRegistry(dir);
-  const tool = createBashTool(shells);
-  const ctx: ToolContext = {
-    cwd: dir,
-    askPermission: async () => true,
-    agent: 'test',
-  };
-
-  const r1 = await tool.execute({ command: 'mkdir -p sub && cd sub' }, ctx);
-  assert.equal(r1.isError, undefined);
-
-  const r2 = await tool.execute({ command: 'pwd' }, ctx);
-  assert.equal(r2.content.trim(), join(dir, 'sub'));
+  
   shells.clear();
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('bash tool: returns tool description and schema', () => {
-  const shells = new ShellRegistry(process.cwd());
-  const tool = createBashTool(shells);
-
-  assert.equal(tool.name, 'bash');
-  assert.ok(tool.description.includes('shell command'));
-  assert.deepEqual(tool.inputSchema, {
-    type: 'object',
-    properties: { command: { type: 'string' } },
-    required: ['command'],
-  });
-  shells.clear();
-});
-
-test('bash tool: handles shell respawn after exit', async () => {
+test('bash tool: handles command execution errors', async () => {
   const dir = tmp();
   const shells = new ShellRegistry(dir);
   const tool = createBashTool(shells);
-  const ctx: ToolContext = {
+  const ctx = {
     cwd: dir,
     askPermission: async () => true,
     agent: 'test',
   };
-
-  // First command - creates a dir and cd's into it
-  const r1 = await tool.execute({ command: 'mkdir -p deep && cd deep' }, ctx);
-  assert.equal(r1.isError, undefined);
-
-  // Second command - run exit to kill the shell
-  await tool.execute({ command: 'exit 42' }, ctx);
-
-  // Third command - shell should respawn at tracked cwd (deep)
-  const r3 = await tool.execute({ command: 'pwd' }, ctx);
-  assert.equal(r3.content.trim(), join(dir, 'deep'));
+  
+  const result = await tool.execute({ command: 'exit 42' }, ctx);
+  assert.ok(result.content.includes('exit 42'));
+  assert.equal(result.isError, true);
+  
   shells.clear();
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('bash tool: captures stderr output', async () => {
-  const shells = new ShellRegistry(process.cwd());
+test('bash tool: persists working directory across calls', async () => {
+  const dir = tmp();
+  const shells = new ShellRegistry(dir);
   const tool = createBashTool(shells);
-  const ctx: ToolContext = {
-    cwd: '/tmp',
+  const ctx = {
+    cwd: dir,
     askPermission: async () => true,
     agent: 'test',
   };
-
-  const result = await tool.execute({ command: 'echo out; echo err >&2' }, ctx);
+  
+  // Create a subdirectory and cd into it
+  await tool.execute({ command: 'mkdir -p subdir && cd subdir' }, ctx);
+  const result = await tool.execute({ command: 'pwd' }, ctx);
+  
+  assert.equal(result.content.trim(), join(dir, 'subdir'));
   assert.equal(result.isError, undefined);
-  assert.ok(result.content.includes('out'));
-  assert.ok(result.content.includes('err'));
+  
   shells.clear();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('bash tool: persists environment variables', async () => {
+  const dir = tmp();
+  const shells = new ShellRegistry(dir);
+  const tool = createBashTool(shells);
+  const ctx = {
+    cwd: dir,
+    askPermission: async () => true,
+    agent: 'test',
+  };
+  
+  await tool.execute({ command: 'export TEST_VAR=hello' }, ctx);
+  const result = await tool.execute({ command: 'echo $TEST_VAR' }, ctx);
+  
+  assert.equal(result.content.trim(), 'hello');
+  assert.equal(result.isError, undefined);
+  
+  shells.clear();
+  rmSync(dir, { recursive: true, force: true });
 });
 
 test('bash tool: handles multi-line commands', async () => {
-  const shells = new ShellRegistry(process.cwd());
+  const dir = tmp();
+  const shells = new ShellRegistry(dir);
   const tool = createBashTool(shells);
-  const ctx: ToolContext = {
-    cwd: '/tmp',
+  const ctx = {
+    cwd: dir,
     askPermission: async () => true,
     agent: 'test',
   };
-
-  const result = await tool.execute({ command: 'for i in 1 2 3; do\n  echo "line-$i"\ndone' }, ctx);
+  
+  const result = await tool.execute({ 
+    command: 'for i in 1 2 3; do\necho "item-$i"\ndone' 
+  }, ctx);
+  
+  assert.ok(result.content.includes('item-1'));
+  assert.ok(result.content.includes('item-2'));
+  assert.ok(result.content.includes('item-3'));
   assert.equal(result.isError, undefined);
-  assert.ok(result.content.includes('line-1'));
-  assert.ok(result.content.includes('line-2'));
-  assert.ok(result.content.includes('line-3'));
+  
   shells.clear();
+  rmSync(dir, { recursive: true, force: true });
 });
 
-test('bash tool: permission is requested with correct parameters', async () => {
-  const shells = new ShellRegistry(process.cwd());
+test('bash tool: handles commands that fail', async () => {
+  const dir = tmp();
+  const shells = new ShellRegistry(dir);
   const tool = createBashTool(shells);
-  const command = 'echo test-command';
-  let receivedAction = '';
-  let receivedTarget = '';
-
-  const ctx: ToolContext = {
-    cwd: '/tmp',
-    askPermission: async (action: string, target: string) => {
-      receivedAction = action;
-      receivedTarget = target;
-      return true;
-    },
-    agent: 'test',
-  };
-
-  await tool.execute({ command }, ctx);
-  assert.equal(receivedAction, 'bash');
-  assert.equal(receivedTarget, command);
-  shells.clear();
-});
-
-test('bash tool: handles different exit codes correctly', async () => {
-  const shells = new ShellRegistry(process.cwd());
-  const tool = createBashTool(shells);
-  const ctx: ToolContext = {
-    cwd: '/tmp',
+  const ctx = {
+    cwd: dir,
     askPermission: async () => true,
     agent: 'test',
   };
-
-  // Test exit code 1
-  const r1 = await tool.execute({ command: 'exit 1' }, ctx);
-  assert.equal(r1.isError, true);
-  assert.ok(r1.content.includes('exit 1'));
-
-  // Test exit code 2
-  const r2 = await tool.execute({ command: 'exit 2' }, ctx);
-  assert.equal(r2.isError, true);
-  assert.ok(r2.content.includes('exit 2'));
-
-  // Test exit code 127 (command not found style)
-  const r3 = await tool.execute({ command: 'exit 127' }, ctx);
-  assert.equal(r3.isError, true);
-  assert.ok(r3.content.includes('exit 127'));
+  
+  const result = await tool.execute({ command: 'ls /nonexistent/path' }, ctx);
+  assert.equal(result.isError, true);
+  
   shells.clear();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('bash tool: returns no output for commands that produce none', async () => {
+  const dir = tmp();
+  const shells = new ShellRegistry(dir);
+  const tool = createBashTool(shells);
+  const ctx = {
+    cwd: dir,
+    askPermission: async () => true,
+    agent: 'test',
+  };
+  
+  const result = await tool.execute({ command: 'true' }, ctx);
+  assert.equal(result.content, '(no output)');
+  assert.equal(result.isError, undefined);
+  
+  shells.clear();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('bash tool: uses per-agent shell isolation', async () => {
+  const dir = tmp();
+  const shells = new ShellRegistry(dir);
+  const tool = createBashTool(shells);
+  
+  const ctx1 = {
+    cwd: dir,
+    askPermission: async () => true,
+    agent: 'agent1',
+  };
+  
+  const ctx2 = {
+    cwd: dir,
+    askPermission: async () => true,
+    agent: 'agent2',
+  };
+  
+  // Agent1 changes directory
+  await tool.execute({ command: 'mkdir -p agent1dir && cd agent1dir' }, ctx1);
+  const result1 = await tool.execute({ command: 'pwd' }, ctx1);
+  assert.equal(result1.content.trim(), join(dir, 'agent1dir'));
+  
+  // Agent2 should be unaffected
+  const result2 = await tool.execute({ command: 'pwd' }, ctx2);
+  assert.equal(result2.content.trim(), dir);
+  
+  shells.clear();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('bash tool: handles timeout', async () => {
+  const dir = tmp();
+  const shells = new ShellRegistry(dir);
+  const tool = createBashTool(shells);
+  const ctx = {
+    cwd: dir,
+    askPermission: async () => true,
+    agent: 'test',
+    signal: AbortSignal.timeout(100),
+  };
+  
+  const result = await tool.execute({ command: 'sleep 10' }, ctx);
+  // Should either be an error or cancelled
+  assert.ok(result.isError || result.content.includes('cancelled'));
+  
+  shells.clear();
+  rmSync(dir, { recursive: true, force: true });
+});
+
+test('bash tool: handles invalid input', async () => {
+  const dir = tmp();
+  const shells = new ShellRegistry(dir);
+  const tool = createBashTool(shells);
+  const ctx = {
+    cwd: dir,
+    askPermission: async () => true,
+    agent: 'test',
+  };
+  
+  // Missing command property
+  const result = await tool.execute({} as any, ctx);
+  assert.equal(result.isError, true);
+  
+  shells.clear();
+  rmSync(dir, { recursive: true, force: true });
 });

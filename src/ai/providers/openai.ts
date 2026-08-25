@@ -158,6 +158,8 @@ export class OpenAISSEConverter {
     if (this.doneEmitted) return [];
     this.doneEmitted = true;
     const content: ContentBlock[] = [];
+    const errors: StreamEvent[] = [];
+    
     if (this.textParts.length) content.push({ type: 'text', text: this.textParts.join('') });
     for (const call of this.calls.values()) {
       if (!call.id || !call.name) continue;
@@ -167,12 +169,14 @@ export class OpenAISSEConverter {
       } catch {
         // Malformed JSON args — surface as error instead of passing raw string
         // downstream (tool executors expect an object, not a partial JSON string).
-        events.push({ type: 'error', error: new AiError('parse', `Malformed tool call arguments for ${call.name}: ${call.argParts.join('').slice(0, 200)}`) });
+        errors.push({ type: 'error', error: new AiError('parse', `Malformed tool call arguments for ${call.name}: ${call.argParts.join('').slice(0, 200)}`) });
         continue;
       }
       content.push({ type: 'tool_call', id: call.id, name: call.name, input });
     }
-    return [{ type: 'done', message: { role: 'assistant', content } }];
+    
+    // Return errors first, then the done event
+    return [...errors, { type: 'done', message: { role: 'assistant', content } }];
   }
 }
 

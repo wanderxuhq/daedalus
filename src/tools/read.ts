@@ -61,7 +61,21 @@ export const readTool: Tool = {
       }
     }
     try {
-      const stat = await fs.stat(full);
+      let stat;
+      try {
+        stat = await fs.stat(full);
+      } catch (e) {
+        const error = e as NodeJS.ErrnoException;
+        if (error.code === 'ENOENT') {
+          return { content: `ENOENT: no such file or directory, stat '${full}'`, isError: true };
+        }
+        throw e;
+      }
+      
+      if (stat.isDirectory()) {
+        return { content: `EISDIR: illegal operation on a directory, read '${full}'`, isError: true };
+      }
+      
       if (stat.size > MAX_BYTES && offset === undefined) {
         return { content: `File is ${stat.size} bytes; too large to read whole. Pass offset/limit.`, isError: true };
       }
