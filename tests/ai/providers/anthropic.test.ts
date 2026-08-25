@@ -48,7 +48,7 @@ test('thinking enabled adds a thinking block with budget and drops temperature',
   const body = toAnthropicBody({ model: 'm', messages, temperature: 0.7, thinking: { enabled: true } });
   assert.deepEqual(body.thinking, { type: 'enabled', budget_tokens: 4096 });
   assert.equal('temperature' in body, false);
-  assert.equal(body.max_tokens, 8192); // 4096 budget + 1 < default 8192
+  assert.equal(body.max_tokens, 16384); // 4096 budget + 1 < default 16384
   const custom = toAnthropicBody({ model: 'm', messages, maxTokens: 1024, thinking: { enabled: true, budgetTokens: 2048 } });
   assert.deepEqual(custom.thinking, { type: 'enabled', budget_tokens: 2048 });
   assert.equal(custom.max_tokens, 2049); // bumped above budget

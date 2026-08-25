@@ -20,6 +20,17 @@ export type CoreEvent =
 
 type Handler = (ev: CoreEvent) => void;
 
+/** Event types that end the current turn. */
+export const TERMINALS: ReadonlySet<CoreEvent['type']> = new Set(['done', 'error']);
+
+export interface SubagentInfo {
+  name: string;
+  task: string;
+  status: 'running' | 'done' | 'error' | 'queued';
+  messageCount: number;
+  loadedSkills: string[];
+}
+
 export class EventBus {
   private handlers = new Set<Handler>();
   subscribe(handler: Handler): () => void {

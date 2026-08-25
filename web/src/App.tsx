@@ -1,4 +1,4 @@
-import { createSignal, createEffect, For, Show } from 'solid-js';
+import { createSignal, createEffect, createMemo, For, Show } from 'solid-js';
 import { state, handleEnvelope, setAutoApproveLocal, submitPrompt, removeLastUserMessage } from './stores.ts';
 import { AiError } from '../../src/ai/errors.ts';
 import { chat, resumeSession, putConfig, getConfig } from './api.ts';
@@ -61,6 +61,26 @@ export function App() {
     location.hash = `#/agent/${encodeURIComponent(name)}`;
   };
 
+  // Auto-scroll: scroll to bottom when new messages arrive, but only if the
+  // user was already near the bottom (so we don't interrupt their reading).
+  let chatStreamRef: HTMLDivElement | undefined;
+  const isNearBottom = createMemo(() => {
+    if (!chatStreamRef) return true; // first render: assume near bottom
+    const { scrollTop, scrollHeight, clientHeight } = chatStreamRef;
+    return scrollHeight - scrollTop - clientHeight < 120; // within 120px of bottom
+  });
+  createEffect(() => {
+    // Subscribe to messages and streamingMessage changes
+    const msgs = state().messages;
+    const sm = state().streamingMessage;
+    // Queue microtask so DOM updates first, then we measure scroll position
+    queueMicrotask(() => {
+      if (chatStreamRef && isNearBottom()) {
+        chatStreamRef.scrollTo({ top: chatStreamRef.scrollHeight, behavior: 'smooth' });
+      }
+    });
+  });
+
   return (
     <Show
       when={route().route === 'main'}
@@ -84,7 +104,7 @@ export function App() {
         </header>
         <Show when={wsStatus() !== 'open'}><div class="reconnect-banner">{t('app.reconnect')}</div></Show>
         <div class="main">
-          <div class="chat-stream">
+          <div class="chat-stream" ref={chatStreamRef}>
             <For each={state().messages}>
               {(m) => <MessageBubble message={m} />}
             </For>

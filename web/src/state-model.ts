@@ -1,12 +1,9 @@
-import type { CoreEvent } from '../../src/core/events.ts';
+import type { CoreEvent, SubagentInfo as SubagentInfoBase } from '../../src/core/events.ts';
+import { TERMINALS } from '../../src/core/events.ts';
 import type { EventEnvelope, SnapshotPayload } from './types.ts';
+import type { Message } from '../../src/ai/types.ts';
 
-export interface SubagentInfo {
-  name: string;
-  task: string;
-  status: 'running' | 'done' | 'error' | 'queued';
-  messageCount: number;
-  loadedSkills: string[];
+export interface SubagentInfo extends SubagentInfoBase {
   /** 该 agent 的实时 CoreEvent 累积（detail 页 live 渲染用；snapshot 重置）。 */
   events: CoreEvent[];
 }
@@ -28,8 +25,6 @@ export interface UiState {
   /** 当前正在流式输出的助手消息（实时渲染用）。 */
   streamingMessage: { role: string; content: unknown[] } | null;
 }
-
-const TERMINALS: ReadonlySet<CoreEvent['type']> = new Set(['done', 'error']);
 
 export function initialUiState(): UiState {
   return { messages: [], subagents: [], running: false, log: [], pendingPermission: null, autoApprove: false, error: null, viewingSubagent: null, subagentMessages: [], streamingMessage: null };
@@ -76,20 +71,22 @@ function updateStreamingMessage(state: UiState, ev: CoreEvent): { role: string; 
   const content = [...state.streamingMessage.content];
   switch (ev.type) {
     case 'text_delta': {
-      // 查找最后一个文本块并追加
+      // 查找最后一个文本块并追加（clone to avoid mutating the original）
       const lastText = [...content].reverse().find((c: any) => c.type === 'text');
       if (lastText) {
-        (lastText as any).text += ev.text;
+        const idx = content.indexOf(lastText);
+        content[idx] = { ...(lastText as any), text: (lastText as any).text + ev.text };
       } else {
         content.push({ type: 'text', text: ev.text });
       }
       break;
     }
     case 'thinking_delta': {
-      // 查找最后一个思考块并追加
+      // 查找最后一个思考块并追加（clone to avoid mutating the original）
       const lastThinking = [...content].reverse().find((c: any) => c.type === 'thinking');
       if (lastThinking) {
-        (lastThinking as any).thinking += ev.thinking;
+        const idx = content.indexOf(lastThinking);
+        content[idx] = { ...(lastThinking as any), thinking: (lastThinking as any).thinking + ev.thinking };
       } else {
         content.push({ type: 'thinking', thinking: ev.thinking });
       }
@@ -101,20 +98,25 @@ function updateStreamingMessage(state: UiState, ev: CoreEvent): { role: string; 
       break;
     }
     case 'tool_call_delta': {
-      // 更新工具调用的输入
+      // 更新工具调用的输入（clone to avoid mutating the original）
       const toolCall = content.find((c: any) => c.type === 'tool_call' && c.id === ev.id);
       if (toolCall) {
-        (toolCall as any).input += ev.inputDelta;
+        const idx = content.indexOf(toolCall);
+        content[idx] = { ...(toolCall as any), input: (toolCall as any).input + ev.inputDelta };
       }
       break;
     }
     case 'tool_result': {
-      // 更新工具调用状态为完成
+      // 更新工具调用状态为完成（clone to avoid mutating the original）
       const toolCall = content.find((c: any) => c.type === 'tool_call' && c.id === ev.id);
       if (toolCall) {
-        (toolCall as any).status = ev.isError ? 'error' : 'done';
-        (toolCall as any).resultContent = ev.content;
-        (toolCall as any).diff = ev.diff;
+        const idx = content.indexOf(toolCall);
+        content[idx] = {
+          ...(toolCall as any),
+          status: ev.isError ? 'error' : 'done',
+          resultContent: ev.content,
+          ...(ev.diff !== undefined ? { diff: ev.diff } : {}),
+        };
       }
       break;
     }
@@ -139,7 +141,19 @@ export function applyEnvelope(state: UiState, env: EventEnvelope): UiState {
     let error = state.error;
     let streamingMessage = state.streamingMessage;
     if ((ev.type === 'done' || ev.type === 'turn_done') && ev.message.role === 'assistant') {
-      messages = [...state.messages, ev.message];
+      // Dedup: use _id (stable across deep clones) to prevent duplicates when
+      // the same message appears in both a snapshot and a live event (reconnect),
+      // or when turn_done is followed by done with the same content.
+      // Fall back to reference equality when _id is absent (test helpers, legacy).
+      const lastMsg = state.messages[state.messages.length - 1] as Message | undefined;
+      const msgId = (ev.message as Message)._id;
+      const lastId = lastMsg?._id;
+      const isDuplicate = msgId !== undefined && lastId !== undefined
+        ? msgId === lastId
+        : lastMsg === ev.message;
+      if (!isDuplicate) {
+        messages = [...state.messages, ev.message];
+      }
       streamingMessage = null; // done/turn_done 事件后清空流式消息
     } else if (ev.type === 'error') {
       error = ev.error.message;
@@ -198,7 +212,7 @@ export function mergeSnapshot(state: UiState, snap: SnapshotPayload): UiState {
     running: snap.running,
     log: [...snap.log],
     pendingPermission: snap.pendingPermission,
-    error: null,
+    error: snap.error ?? null,
     streamingMessage: null, // 快照重置时清空流式消息
     // viewingSubagent 和 subagentMessages 保持不变——快照重置不应打断用户的子代理浏览。
   };

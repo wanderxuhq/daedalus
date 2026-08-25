@@ -1,16 +1,8 @@
-import type { CoreEvent } from '../core/events.ts';
-
-export interface SubagentTracked {
-  name: string;
-  task: string;
-  status: 'running' | 'done' | 'error';
-  messageCount: number;
-  loadedSkills: string[];
-}
+import type { CoreEvent, SubagentInfo } from '../core/events.ts';
 
 /** Tracks subagent activity (name / current task / run status) for ws snapshots and /api/agents. */
 export class EventHub {
-  private byName = new Map<string, SubagentTracked>();
+  private byName = new Map<string, SubagentInfo>();
   private order: string[] = [];
 
   handle(ev: CoreEvent): void {
@@ -32,11 +24,17 @@ export class EventHub {
       case 'error':
         t.status = 'error';
         break;
+      case 'tool_result':
+        t.messageCount++;
+        break;
+      case 'skill_load':
+        if (!t.loadedSkills.includes(ev.name)) t.loadedSkills.push(ev.name);
+        break;
     }
   }
 
   /** Return all agents in first-seen order (including running/done/error status). */
-  list(): SubagentTracked[] {
+  list(): SubagentInfo[] {
     return this.order.map((name) => this.byName.get(name)!);
   }
 

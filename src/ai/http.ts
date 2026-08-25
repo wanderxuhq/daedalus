@@ -45,7 +45,7 @@ export class HttpClient {
             : res.status === 429 ? 'rateLimit'
             : res.status >= 500 ? 'server'
             : 'badRequest';
-          const err = new AiError(kind, `HTTP ${res.status}: ${errText.slice(0, 300)}`, res.status);
+          const err = new AiError(kind, `HTTP ${res.status}: ${errText.slice(0, 300)}`, { status: res.status });
           if (err.retryable && attempt < this.maxRetries) {
             attempt++;
             await sleep(500 * 2 ** attempt, signal);
@@ -78,9 +78,7 @@ export class HttpClient {
 }
 
 function cancellationError(): AiError {
-  const err = new AiError('timeout', 'Request cancelled by caller');
-  (err as { retryable: boolean }).retryable = false;
-  return err;
+  return new AiError('timeout', 'Request cancelled by caller', { retryable: false });
 }
 
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {

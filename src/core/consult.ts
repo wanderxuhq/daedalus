@@ -20,6 +20,8 @@ export interface ConsultToolOptions {
   availableTools: Tool[];
   /** Context budget for the clone's own run (independent of the source session). */
   maxContextTokens?: number;
+  /** Session-level model override forwarded to the clone. */
+  model?: string;
   /** Extended thinking forwarded to the clone's turns too. */
   thinking?: ThinkingParams;
   /** Shared file locks; the clone holds them under `<agent>#clone`. */
@@ -78,6 +80,24 @@ function mergeContent(blocks: ContentBlock[]): ContentBlock[] {
 }
 
 /**
+ * Merge consecutive same-role messages by concatenating their content blocks.
+ * Required after dropping tool blocks (digest mode) which can leave adjacent
+ * user or assistant messages — providers require alternating roles.
+ */
+function mergeAdjacentRoles(msgs: Message[]): Message[] {
+  const merged: Message[] = [];
+  for (const m of msgs) {
+    const prev = merged[merged.length - 1];
+    if (prev && prev.role === m.role) {
+      prev.content = mergeContent([...prev.content, ...m.content]);
+    } else {
+      merged.push(m);
+    }
+  }
+  return merged;
+}
+
+/**
  * Prepare a cloned subagent history for a consult run:
  * - deep-copies, so the source session is never touched;
  * - trims an unclosed trailing tool_call and its orphaned tool_result, so the
@@ -100,9 +120,22 @@ export function prepareConsultHistory(messages: Message[], question: string, opt
     const last = msgs[msgs.length - 1];
     const lastBlock = last.content[last.content.length - 1];
     const isOpenCall = last.role === 'assistant' && lastBlock?.type === 'tool_call';
-    const isOrphanResult = last.role === 'user' && last.content.some((b) => b.type === 'tool_result');
+    // Only treat as orphaned if the user message is purely tool_results
+    // (no text content). A user message with text + tool_result is legitimate.
+    const isOrphanResult = last.role === 'user'
+      && last.content.every((b) => b.type === 'tool_result');
     if (!isOpenCall && !isOrphanResult) break;
-    msgs.pop();
+    if (isOpenCall) {
+      // Only remove trailing tool_call blocks; keep text/thinking before them
+      while (last.content.length > 0 && last.content[last.content.length - 1].type === 'tool_call') {
+        last.content.pop();
+      }
+      // If message is now empty, remove it entirely; otherwise keep the text
+      if (last.content.length === 0) msgs.pop();
+      else break; // text remains — valid closed prefix
+    } else {
+      msgs.pop(); // orphaned pure tool_result message
+    }
   }
   if (opts.digest) {
     msgs = msgs
@@ -113,18 +146,8 @@ export function prepareConsultHistory(messages: Message[], question: string, opt
       }))
       .filter((m) => m.content.length > 0);
     // Dropping tool blocks can leave consecutive same-role messages; merge them
-    // (concatenating text blocks) so the history stays valid for
-    // alternating-role providers.
-    const merged: Message[] = [];
-    for (const m of msgs) {
-      const prev = merged[merged.length - 1];
-      if (prev && prev.role === m.role) {
-        prev.content = mergeContent([...prev.content, ...m.content]);
-      } else {
-        merged.push(m);
-      }
-    }
-    msgs = merged;
+    // so the history stays valid for alternating-role providers.
+    msgs = mergeAdjacentRoles(msgs);
   }
   // Append the question as a user turn, merging into a trailing user message
   // to preserve alternating roles.
@@ -196,6 +219,7 @@ export function createConsultTool(opts: ConsultToolOptions): Tool {
           askPermission: opts.askPermission(),
           maxIterations: args.maxIterations ?? DEFAULT_CONSULT_MAX_ITERATIONS,
           maxContextTokens: opts.maxContextTokens,
+          ...(opts.model !== undefined ? { model: opts.model } : {}),
           ...(opts.thinking ? { thinking: opts.thinking } : {}),
           ...(opts.locks ? { locks: opts.locks } : {}),
           ...(opts.undo ? { undo: opts.undo } : {}),

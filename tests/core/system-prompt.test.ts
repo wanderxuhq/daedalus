@@ -22,17 +22,18 @@ test('full toolset prompt advertises every tool, including explorers', () => {
   assert.ok(!p.includes('NOT available'));
 });
 
-test('layered main-agent prompt removes explorers and forces delegation', () => {
+test('layered main-agent prompt includes explorers and orchestration for delegation', () => {
   const p = buildSystemPrompt({ tools: [...DEFAULT_MAIN_AGENT_TOOLS] });
-  for (const kept of ['read', 'write', 'edit', 'Skill', 'delegate']) {
-    assert.ok(p.includes(`- ${kept}:`), `layered prompt should advertise ${kept}`);
+  // Individual tools
+  for (const tool of ['read', 'write', 'edit', 'bash', 'Skill', 'delegate']) {
+    assert.ok(p.includes(`- ${tool}:`), `layered prompt should advertise ${tool}`);
   }
-  for (const banned of ['bash', 'ls', 'grep', 'glob']) {
-    assert.ok(!p.includes(`- ${banned}:`), `layered prompt must not advertise ${banned}`);
-  }
-  // The forced-delegation framing is present.
-  assert.ok(p.includes('Orchestration: you are the author'));
-  assert.ok(p.includes('bash, ls, grep, glob are NOT available'));
+  // ls/grep/glob merge into one line when all present
+  assert.ok(p.includes('ls, grep, glob'), `layered prompt should advertise ls, grep, glob`);
+  // The orchestration section is present (delegate is included).
+  assert.ok(p.includes('Orchestration'));
+  // All builtin tools are available — no "NOT available" note.
+  assert.ok(!p.includes('NOT available'));
 });
 
 test('subagent prompt advertises exactly the builtins (no Skill, no delegate, no orchestration)', () => {

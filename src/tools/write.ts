@@ -36,7 +36,15 @@ export const writeTool: Tool = {
       // is the /undo snapshot). An unreadable path is treated as absent, exactly
       // like the old fs.access probe.
       let original: string | null = null;
-      try { original = await fs.readFile(full, 'utf8'); } catch { /* not exists */ }
+      try {
+        original = await fs.readFile(full, 'utf8');
+      } catch (e: any) {
+        // Only treat ENOENT (file not found) as "absent". Other errors
+        // (EACCES, EIO, etc.) are real failures that should be surfaced.
+        if (e?.code !== 'ENOENT') {
+          return { content: `Failed to read ${full}: ${e.message}`, isError: true };
+        }
+      }
       if (original !== null) {
         const ok = await ctx.askPermission('write', full);
         if (!ok) return { content: 'Permission denied by user', isError: true };

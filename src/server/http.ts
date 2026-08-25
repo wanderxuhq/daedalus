@@ -7,7 +7,7 @@ import { readFile } from 'node:fs/promises';
 import path from 'node:path';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
-import { HttpError } from './http-error.ts';
+import { HttpError, sendJson } from './http-error.ts';
 
 export type Handler = (
   req: IncomingMessage,
@@ -96,12 +96,12 @@ export class HttpServer {
       if (!handler) throw new HttpError(404, 'not found');
       const body = await readBody(req);
       const result = await handler(req, body, url.searchParams);
-      res.json(result ?? { ok: true });
+      sendJson(res, result ?? { ok: true });
     } catch (e: unknown) {
       if (e instanceof HttpError) {
-        res.json({ error: e.message }, e.status);
+        sendJson(res, { error: e.message }, e.status);
       } else {
-        res.json({ error: 'internal error' }, 500);
+        sendJson(res, { error: 'internal error' }, 500);
       }
     }
   }

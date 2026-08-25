@@ -78,11 +78,19 @@ export async function runAgent(params: RunAgentParams): Promise<string> {
   // merged the prompt into a summary, truncates before it — leaving a valid,
   // provider-acceptable state).
   const preRun = new Set<Message>(session.getMessages());
+  // Snapshot before the prompt is added — used to restore on compaction failure
+  // (the prompt is a run artifact and must not persist into the next run).
+  const prePrompt = session.getMessages().slice();
   // An empty prompt means the caller pre-built the full history (consult's
   // read-only clone); skip injection so no empty user message is created.
   if (params.prompt) {
     session.addMessage({ role: 'user', content: [{ type: 'text', text: params.prompt }] });
   }
+  // Track pre-compaction state for rollback: if compaction replaces the history
+  // array and the model then fails, we must restore the pre-compaction state
+  // (the summary is a run artifact and should be discarded on failure).
+  let preCompaction: Message[] | null = null;
+  let didCompact = false;
 
   const toolDefs: ToolDefinition[] = params.tools.map((t) => ({
     name: t.name,
@@ -111,9 +119,15 @@ export async function runAgent(params: RunAgentParams): Promise<string> {
         try {
           const compacted = await compactHistory(before, {
             maxTokens: params.maxContextTokens,
-            summarize: (turns) => summarizeTurns(params.client, turns),
+            summarize: (turns) => summarizeTurns(params.client, turns, { signal: params.signal }),
+            signal: params.signal,
           });
           if (compacted) {
+            // Save pre-compaction state for rollback. Use prePrompt (before the
+            // prompt was added) so the rollback produces a clean, prompt-free
+            // session that the next run() can inject a fresh prompt into.
+            preCompaction = prePrompt;
+            didCompact = true;
             session.replaceMessages(compacted.messages);
             session.bus.emit({ type: 'context_compact', dropped: compacted.dropped, kept: compacted.messages.length });
             changed = true;
@@ -123,8 +137,11 @@ export async function runAgent(params: RunAgentParams): Promise<string> {
           // rather than failing the whole turn.
         }
         if (!changed) {
-          const trimmed = trimHistory(before, { maxTokens: params.maxContextTokens });
-          if (trimmed !== before) {
+          // Re-read after potential compaction — `before` may be stale (compaction
+          // replaced the array). Trimming the stale array would undo the compaction.
+          const current = session.getMessages();
+          const trimmed = trimHistory(current, { maxTokens: params.maxContextTokens });
+          if (trimmed !== current) {
             session.replaceMessages(trimmed);
             session.bus.emit({
               type: 'context_trim',
@@ -155,13 +172,16 @@ export async function runAgent(params: RunAgentParams): Promise<string> {
       }
       // Emit the buffered done event as either turn_done (if tool calls follow) or done (final)
       if (pendingDone?.type === 'done') {
+        // Add message to session BEFORE emitting event so that snapshots on reconnect
+        // include the final message (previously, done was emitted before addMessage,
+        // causing a race condition where reconnecting clients missed the message).
+        if (hasPersistableContent(pendingDone.message)) session.addMessage(pendingDone.message);
         const calls = pendingDone.message.content.filter((c) => c.type === 'tool_call');
         if (calls.length > 0) {
           session.bus.emit({ type: 'turn_done', message: pendingDone.message });
         } else {
           session.bus.emit(toCoreEvent(pendingDone));
         }
-        if (hasPersistableContent(pendingDone.message)) session.addMessage(pendingDone.message);
       }
       // Equivalent of events.findLast(...): scan backwards for the terminal 'done'.
       // findLast is an ES2023 method and this project's tsconfig targets ES2022.
@@ -266,14 +286,16 @@ export async function runAgent(params: RunAgentParams): Promise<string> {
     }
     return finalText;
   } catch (err) {
-    // Roll the failed turn back (prompt + any tool messages) so a later successful
-    // run() does not persist an orphaned user prompt (final-review Finding 5).
-    const keep: Message[] = [];
-    for (const m of session.getMessages()) {
-      if (!preRun.has(m)) break; // the first message this run added — truncate here
-      keep.push(m);
+    // Roll the failed turn back so a later successful run() does not persist
+    // an orphaned user prompt. When compaction ran mid-turn, the entire
+    // session was replaced (summary is a run artifact), so restore the
+    // pre-compaction state. When compaction failed (try-catch fell through),
+    // restore to pre-prompt state — the prompt is also a run artifact.
+    if (didCompact && preCompaction) {
+      session.replaceMessages(preCompaction);
+    } else {
+      session.replaceMessages(prePrompt);
     }
-    session.replaceMessages(keep);
     throw err;
   }
 }

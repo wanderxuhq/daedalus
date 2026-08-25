@@ -4,7 +4,7 @@ export const DELEGATE_TOOL_NAME = 'delegate';
 export const DELEGATE_MANY_TOOL_NAME = 'delegateMany';
 export const CONSULT_TOOL_NAME = 'consult';
 /** The author's loop: tools the main agent may call directly under the default layering. */
-export const DEFAULT_MAIN_AGENT_TOOLS = [DELEGATE_TOOL_NAME, DELEGATE_MANY_TOOL_NAME, CONSULT_TOOL_NAME, 'read', 'write', 'edit', SKILL_TOOL_NAME] as const;
+export const DEFAULT_MAIN_AGENT_TOOLS = [DELEGATE_TOOL_NAME, DELEGATE_MANY_TOOL_NAME, CONSULT_TOOL_NAME, 'read', 'write', 'edit', 'bash', 'ls', 'grep', 'glob', SKILL_TOOL_NAME] as const;
 
 const TOOL_LINES: Record<string, string> = {
   bash: '- bash: run a shell command. Use it for anything a shell does best — build, test, inspect, search, git. Prefer one command that answers the question over a chain of partial ones.',
@@ -42,18 +42,17 @@ export interface BuildSystemPromptOptions {
 
 /**
  * The orchestration rules shown to an agent that HAS delegate: the main agent
- * is the author/planner; exploration and execution belong to subagents.
+ * is the author/planner; complex exploration and execution belong to subagents,
+ * but simple direct operations (ls, grep, a single bash command) are fine.
  */
 const ORCHESTRATION = [
-  '# Orchestration: you are the author, subagents do the exploration',
+  '# Orchestration: you plan, subagents do heavy lifting',
   '',
-  '- You plan, decide, and edit. You do not explore, search, or run commands yourself.',
-  '- Exploration, research, repository-wide reading, builds, tests, and any command execution MUST go through `delegate`: give the subagent a self-contained task (paths, acceptance criteria, and what its report must contain). The subagent returns only its final report, so your context stays small.',
+  '- You plan, decide, edit, and run simple commands directly. Use `read`, `write`, `edit`, `bash`, `ls`, `grep`, `glob` for straightforward tasks — listing files, searching code, reading a file before editing, running a single build/test command.',
+  '- Delegate complex, multi-step work to subagents: extended exploration, large refactors, writing tests, investigating unfamiliar parts of the codebase, or any task that would produce many tool calls and pollute your context. The subagent returns only its final report, so your context stays small.',
   '- For several INDEPENDENT investigations, use `delegateMany` to fan them out to parallel subagents and merge the reports into one result.',
   "- To tap a subagent's knowledge after its run, use `consult` — it answers your question from a read-only clone of that subagent's session history, without waking the subagent or touching its history.",
-  "- Keep direct tool use to the author's loop: `read` one file when you need to confirm before/after an edit, then `write`/`edit`.",
-  '- If you need bash, ls, grep, or glob, that is a signal the work belongs to a subagent — delegate it instead.',
-  '- After a subagent changes code, delegate a verification task that runs the build/tests; never run bash yourself.',
+  '- After a subagent changes code, delegate a verification task that runs the build/tests — or run them yourself with a single bash command if it is simple enough.',
 ].join('\n');
 
 export function buildSystemPrompt(opts: BuildSystemPromptOptions = {}): string {

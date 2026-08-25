@@ -175,7 +175,7 @@ test('constructor injects the system prompt once as the first message', async ()
   await engine.dispose();
 });
 
-test('layering: main agent has no bash/ls/grep/glob; a delegated subagent gets the full toolset', async () => {
+test('layering: main agent has all tools; a delegated subagent gets the full builtin toolset', async () => {
   const calls: string[][] = [];
   const client: AiClient = {
     async *streamChat(params) {
@@ -197,10 +197,9 @@ test('layering: main agent has no bash/ls/grep/glob; a delegated subagent gets t
   assert.equal(result, 'done');
 
   const main = calls[0];
+  // Main agent has all tools: builtins + delegate + delegateMany + consult + Skill
   assert.ok(main.includes(DELEGATE_TOOL_NAME) && main.includes('read') && main.includes('write') && main.includes('edit') && main.includes('Skill'));
-  for (const banned of ['bash', 'ls', 'grep', 'glob']) {
-    assert.ok(!main.includes(banned), `main agent must not have ${banned}`);
-  }
+  assert.ok(main.includes('bash') && main.includes('ls') && main.includes('grep') && main.includes('glob'));
   // The subagent receives the FULL builtin toolset (and never delegate itself).
   assert.deepEqual(calls[1].slice().sort(), [...BUILTIN_TOOL_NAMES].slice().sort());
   await engine.dispose();

@@ -78,7 +78,7 @@ export function analyzeTurns(messages: Message[]): TurnAnalysis {
 
 /**
  * How many leading turns must go — dropped by trimHistory or summarized by
- * compactHistory — to fit the budget (big-step to `maxTokens / 2`, never below
+ * compactHistory — to fit the budget (big-step to `maxTokens * 0.75`, never below
  * `MIN_KEEP_TURNS` turns, never across a protected message). 0 = under budget.
  */
 export function computeTrimCut(messages: Message[], opts: TrimOptions): number {
@@ -99,7 +99,7 @@ export function computeTrimCut(messages: Message[], opts: TrimOptions): number {
   let cut = 0;
   while (
     cut < bounds.length - MIN_KEEP_TURNS &&
-    prefixCost + suffix[bounds[cut]] > opts.maxTokens / 2
+    prefixCost + suffix[bounds[cut]] > opts.maxTokens * 0.75
   ) {
     cut++;
   }
@@ -119,8 +119,8 @@ export function computeTrimCut(messages: Message[], opts: TrimOptions): number {
 }
 
 /**
- * Drop oldest whole turns until the history fits `maxTokens / 2` (the design's
- * "big-step to 50% of budget" target; or `MIN_KEEP_TURNS` turns remain), keeping the
+ * Drop oldest whole turns until the history fits `maxTokens * 0.75` (the
+ * "big-step to 75% of budget" target; or `MIN_KEEP_TURNS` turns remain), keeping the
  * system prefix and never dropping a protected message
  * (pulling the cut back to keep its whole turn). Returns the input array unchanged
  * when nothing is trimmed, so callers can detect a trim via `!==`.

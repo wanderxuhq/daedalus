@@ -11,8 +11,12 @@ export class Session {
   readonly bus = new EventBus();
   private msgs: Message[] = [];
   private skills = new Set<string>();
+  /** Monotonically increasing counter for stable message identity (dedup across clones). */
+  private nextMsgId = 1;
   /** Queue of user-injected messages, processed on the subagent's next loop iteration. */
   private pendingQueue: Message[] = [];
+  /** System prompt text set at creation time; used by startSubagentLoop to re-init consistently. */
+  systemPromptText: string | null = null;
 
   start(): void {
     this.bus.emit({ type: 'session_start' });
@@ -23,6 +27,7 @@ export class Session {
   }
 
   addMessage(m: Message): void {
+    if (m._id === undefined) m._id = this.nextMsgId++;
     this.msgs.push(m);
   }
 
@@ -68,6 +73,7 @@ export class Session {
       messages: this.msgs.map((m) => ({
         role: m.role,
         content: m.content.map((b) => structuredClone(b)),
+        _id: m._id,
       })),
       loadedSkills: [...this.skills],
     };

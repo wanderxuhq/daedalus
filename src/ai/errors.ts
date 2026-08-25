@@ -8,12 +8,12 @@ export class AiError extends Error {
   readonly status?: number;
   readonly retryable: boolean;
 
-  constructor(kind: AiErrorKind, message: string, status?: number) {
+  constructor(kind: AiErrorKind, message: string, opts?: { status?: number; retryable?: boolean }) {
     super(message);
     this.name = 'AiError';
     this.kind = kind;
-    this.status = status;
-    this.retryable = RETRYABLE.has(kind);
+    this.status = opts?.status;
+    this.retryable = opts?.retryable ?? RETRYABLE.has(kind);
   }
 }
 

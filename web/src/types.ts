@@ -14,4 +14,5 @@ export interface SnapshotPayload {
   running: boolean;
   log: CoreEvent[];
   pendingPermission: { id: string; action: string; target: string } | null;
+  error: string | null;
 }

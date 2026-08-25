@@ -9,6 +9,38 @@ import type { FileLockRegistry } from './file-lock.ts';
 import type { FileUndoRegistry } from './undo.ts';
 import { PLAN_BLOCKED_TOOLS } from '../tools/registry.ts';
 import { summarizeMainForTask } from '../agent/compact.ts';
+import { estimateTokens } from '../agent/context.ts';
+
+/**
+ * Summary cache: avoids redundant LLM calls when the main conversation hasn't
+ * changed between delegate calls. Key is a quick fingerprint of the conversation
+ * state (message count + first/last message hash). Value is the summary string.
+ */
+interface SummaryCacheEntry {
+  key: string;
+  summary: string;
+}
+
+/** Minimum main-history tokens before we bother summarizing. Below this, the
+ * subagent has enough context from its task text alone. */
+const MIN_SUMMARY_TOKENS = 2_000;
+
+/** Quick fingerprint of conversation state for cache key. Not a cryptographic
+ * hash — just enough to detect "has the conversation changed since last time".
+ * Includes a mid-history sample to catch edits in the middle of the conversation. */
+function conversationFingerprint(msgs: Message[]): string {
+  if (msgs.length === 0) return '0';
+  // System messages are static — skip to the first user message for the fingerprint.
+  let first = 0;
+  while (first < msgs.length && msgs[first].role === 'system') first++;
+  const last = msgs.length - 1;
+  // Sample: first, middle, and last conversation messages for ~60 chars of entropy.
+  const head = msgs[first]?.content?.[0]?.type === 'text' ? (msgs[first].content[0] as { type: 'text'; text: string }).text.slice(0, 20) : '';
+  const midIdx = Math.floor((first + last) / 2);
+  const mid = msgs[midIdx]?.content?.[0]?.type === 'text' ? (msgs[midIdx].content[0] as { type: 'text'; text: string }).text.slice(0, 20) : '';
+  const tail = msgs[last]?.content?.[0]?.type === 'text' ? (msgs[last].content[0] as { type: 'text'; text: string }).text.slice(0, 20) : '';
+  return `${msgs.length}:${head}:${mid}:${tail}`;
+}
 
 export interface DelegateToolOptions {
   client: AiClient;
@@ -60,6 +92,8 @@ export interface DelegateToolOptions {
    * Default: true. Set to false to disable (useful for testing).
    */
   enableAutoSummary?: boolean;
+  /** Shared summary cache across delegate calls (avoids redundant LLM summarization). */
+  summaryCache?: SummaryCacheEntry;
 }
 
 export interface DelegateInput {
@@ -148,19 +182,35 @@ async function runOnce(opts: DelegateToolOptions, depth: number, args: DelegateI
   }
   if (subSession.getMessages().length === 0) {
     const tools = nested ? [...BUILTIN_TOOL_NAMES, DELEGATE_TOOL_NAME, DELEGATE_MANY_TOOL_NAME] : [...BUILTIN_TOOL_NAMES];
+    const promptText = opts.subagentSystemPrompt ?? buildSubagentPrompt({ json: args.json, tools, memory: opts.memory });
     subSession.addMessage({
       role: 'system',
-      content: [{ type: 'text', text: opts.subagentSystemPrompt ?? buildSubagentPrompt({ json: args.json, tools, memory: opts.memory }) }],
+      content: [{ type: 'text', text: promptText }],
     });
+    // Store the prompt so startSubagentLoop can reuse it on restart
+    subSession.systemPromptText = promptText;
   }
 
-  // Summarize main conversation history for context injection
+  // Summarize main conversation history for context injection.
+  // Skip when the history is short (subagent has enough from its task text) or
+  // when the conversation hasn't changed since the last summary (cache hit).
   let contextSummary = '';
   if (opts.enableAutoSummary !== false && opts.getMainHistory) {
     try {
       const mainHistory = opts.getMainHistory();
-      if (mainHistory.length > 0) {
-        contextSummary = await summarizeMainForTask(opts.client, mainHistory, args.task);
+      if (mainHistory.length > 0 && estimateTokens(mainHistory) >= MIN_SUMMARY_TOKENS) {
+        const fp = conversationFingerprint(mainHistory);
+        if (opts.summaryCache && opts.summaryCache.key === fp) {
+          // Cache hit: conversation hasn't changed since last delegate call
+          contextSummary = opts.summaryCache.summary;
+        } else {
+          contextSummary = await summarizeMainForTask(opts.client, mainHistory, args.task);
+          // Store in cache for next delegate call
+          if (opts.summaryCache) {
+            opts.summaryCache.key = fp;
+            opts.summaryCache.summary = contextSummary;
+          }
+        }
       }
     } catch (e) {
       // Summary failure is non-fatal; proceed without context

@@ -46,7 +46,8 @@ export function toOpenAIBody(params: ChatParams): Record<string, unknown> {
     const calls = m.content.filter((c): c is Extract<ContentBlock, { type: 'tool_call' }> => c.type === 'tool_call');
     const msg: Record<string, unknown> = { role: 'assistant', content: text || null };
     if (calls.length) {
-      msg.content = null;
+      // OpenAI supports assistant messages with both content and tool_calls.
+      // Preserve explanatory text alongside tool calls.
       msg.tool_calls = calls.map((c) => ({
         id: c.id,
         type: 'function',
@@ -161,7 +162,14 @@ export class OpenAISSEConverter {
     for (const call of this.calls.values()) {
       if (!call.id || !call.name) continue;
       let input: unknown = {};
-      try { input = JSON.parse(call.argParts.join('')); } catch { input = call.argParts.join(''); }
+      try {
+        input = JSON.parse(call.argParts.join(''));
+      } catch {
+        // Malformed JSON args — surface as error instead of passing raw string
+        // downstream (tool executors expect an object, not a partial JSON string).
+        events.push({ type: 'error', error: new AiError('parse', `Malformed tool call arguments for ${call.name}: ${call.argParts.join('').slice(0, 200)}`) });
+        continue;
+      }
       content.push({ type: 'tool_call', id: call.id, name: call.name, input });
     }
     return [{ type: 'done', message: { role: 'assistant', content } }];

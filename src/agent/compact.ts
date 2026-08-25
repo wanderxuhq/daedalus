@@ -44,20 +44,26 @@ function buildTaskSummarySystem(task: string): string {
   ].join('\n');
 }
 
-/** Ask the same model to compress a span of whole turns into one summary. */
-export async function summarizeTurns(client: AiClient, turns: Message[]): Promise<string> {
-  const system: Message = { role: 'system', content: [{ type: 'text', text: COMPACT_SYSTEM }] };
+/** Shared summarizer: send messages with a system prompt and return the model's text. */
+async function summarizeWithClient(client: AiClient, systemText: string, messages: Message[], opts?: { signal?: AbortSignal }): Promise<string> {
+  const system: Message = { role: 'system', content: [{ type: 'text', text: systemText }] };
   let text = '';
   for await (const ev of client.streamChat({
-    messages: [system, ...turns],
+    messages: [system, ...messages],
     tools: [],
     cache: { enabled: false },
     maxTokens: 1024,
+    ...(opts?.signal ? { signal: opts.signal } : {}),
   })) {
     if (ev.type === 'text_delta') text += ev.text;
     if (ev.type === 'error') throw ev.error;
   }
   return text.trim();
+}
+
+/** Ask the same model to compress a span of whole turns into one summary. */
+export async function summarizeTurns(client: AiClient, turns: Message[], opts?: { signal?: AbortSignal }): Promise<string> {
+  return summarizeWithClient(client, COMPACT_SYSTEM, turns, opts);
 }
 
 /**
@@ -65,29 +71,20 @@ export async function summarizeTurns(client: AiClient, turns: Message[]): Promis
  * This summary is injected into the subagent's context to avoid redundant work.
  */
 export async function summarizeMainForTask(
-  client: AiClient, 
-  mainHistory: Message[], 
-  task: string
+  client: AiClient,
+  mainHistory: Message[],
+  task: string,
+  opts?: { signal?: AbortSignal }
 ): Promise<string> {
   if (mainHistory.length === 0) return '';
-  
-  const system: Message = { role: 'system', content: [{ type: 'text', text: buildTaskSummarySystem(task) }] };
-  let text = '';
-  for await (const ev of client.streamChat({
-    messages: [system, ...mainHistory],
-    tools: [],
-    cache: { enabled: false },
-    maxTokens: 1024,
-  })) {
-    if (ev.type === 'text_delta') text += ev.text;
-    if (ev.type === 'error') throw ev.error;
-  }
-  return text.trim();
+  return summarizeWithClient(client, buildTaskSummarySystem(task), mainHistory, opts);
 }
 
 export interface CompactOptions extends TrimOptions {
   /** Compress a span of whole turns into a summary string. */
   summarize: (turns: Message[]) => Promise<string>;
+  /** Abort signal for the summarizer LLM call. */
+  signal?: AbortSignal;
 }
 
 export interface CompactResult {

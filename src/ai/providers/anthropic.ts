@@ -13,7 +13,7 @@ export interface AnthropicClientConfig {
 
 const DEFAULT_MODEL = 'claude-sonnet-4-5';
 const DEFAULT_BASE = 'https://api.anthropic.com';
-const DEFAULT_MAX_TOKENS = 8192;
+const DEFAULT_MAX_TOKENS = 16384;
 /** Anthropic requires budget_tokens >= 1024 and < max_tokens. */
 const DEFAULT_THINKING_BUDGET = 4096;
 
@@ -37,7 +37,6 @@ export function toAnthropicBody(params: ChatParams): Record<string, unknown> {
     max_tokens: maxTokens,
     stream: true,
   };
-  if (systemText) body.system = systemText;
   // Anthropic forbids temperature alongside extended thinking.
   if (!thinkingEnabled && params.temperature !== undefined) body.temperature = params.temperature;
   if (thinkingEnabled) {
@@ -46,8 +45,10 @@ export function toAnthropicBody(params: ChatParams): Record<string, unknown> {
 
   const cacheEnabled = params.cache?.enabled !== false;
 
-  if (cacheEnabled && systemText) {
-    body.system = [{ type: 'text', text: systemText, cache_control: { type: 'ephemeral' } }];
+  if (systemText) {
+    body.system = cacheEnabled
+      ? [{ type: 'text', text: systemText, cache_control: { type: 'ephemeral' } }]
+      : systemText;
   }
 
   const nonSystem = params.messages.filter((m) => m.role !== 'system');
@@ -111,15 +112,20 @@ function toAnthropicMessage(m: Message, previous: Message | undefined): Record<s
   return { role: m.role, content };
 }
 
-export function anthropicEventsToIR(payloads: Record<string, unknown>[]): StreamEvent[] {
-  const events: StreamEvent[] = [];
-  const blocks: { type: string; id?: string; name?: string; text?: string; thinking?: string; signature?: string; inputJson?: string }[] = [];
+/**
+ * Stateful SSE → IR converter for Anthropic messages API. Yields events per
+ * payload (like OpenAI's converter) instead of buffering everything until
+ * message_stop. This prevents data loss on mid-stream interruptions.
+ */
+export class AnthropicSSEConverter {
+  private blocks: { type: string; id?: string; name?: string; text?: string; thinking?: string; signature?: string; inputJson?: string }[] = [];
+  private doneEmitted = false;
 
-  for (const p of payloads) {
-    switch (p.type) {
+  push(payload: Record<string, unknown>): StreamEvent[] {
+    const events: StreamEvent[] = [];
+    switch (payload.type) {
       case 'message_start': {
-        // Message-level usage arrives up front: input + any cache reads/writes.
-        const usage = (p.message as { usage?: Record<string, number> } | undefined)?.usage;
+        const usage = (payload.message as { usage?: Record<string, number> } | undefined)?.usage;
         if (usage) {
           const input = (usage.input_tokens ?? 0) + (usage.cache_creation_input_tokens ?? 0) + (usage.cache_read_input_tokens ?? 0);
           const output = usage.output_tokens ?? 0;
@@ -128,22 +134,22 @@ export function anthropicEventsToIR(payloads: Record<string, unknown>[]): Stream
         break;
       }
       case 'message_delta': {
-        // Streaming output tokens are reported in the final delta.
-        const usage = p.usage as { output_tokens?: number } | undefined;
+        const usage = payload.usage as { output_tokens?: number } | undefined;
         const output = usage?.output_tokens ?? 0;
         if (output) events.push({ type: 'usage', inputTokens: 0, outputTokens: output });
         break;
       }
       case 'content_block_start': {
-        const cb = p.content_block as { type: string; id?: string; name?: string; text?: string; thinking?: string; signature?: string };
-        blocks.push({ type: cb.type, id: cb.id, name: cb.name, text: cb.text ?? '', thinking: cb.thinking ?? '', signature: cb.signature });
+        const cb = payload.content_block as { type: string; id?: string; name?: string; text?: string; thinking?: string; signature?: string };
+        this.blocks.push({ type: cb.type, id: cb.id, name: cb.name, text: cb.text ?? '', thinking: cb.thinking ?? '', signature: cb.signature });
         if (cb.type === 'thinking') events.push({ type: 'thinking_delta', thinking: '' });
         if (cb.type === 'tool_use') events.push({ type: 'tool_call_start', id: cb.id!, name: cb.name! });
         break;
       }
       case 'content_block_delta': {
-        const delta = p.delta as { type: string; text?: string; thinking?: string; partial_json?: string };
-        const block = blocks[p.index as number];
+        const delta = payload.delta as { type: string; text?: string; thinking?: string; partial_json?: string };
+        const block = this.blocks[payload.index as number];
+        if (!block) break; // out-of-bounds index from API — skip silently
         if (delta.type === 'text_delta' && delta.text) {
           if (block) block.text = (block.text ?? '') + delta.text;
           events.push({ type: 'text_delta', text: delta.text });
@@ -156,29 +162,40 @@ export function anthropicEventsToIR(payloads: Record<string, unknown>[]): Stream
         }
         break;
       }
-      case 'message_stop': {
-        const content: import('../types.ts').ContentBlock[] = blocks.map((b) => {
-          if (b.type === 'text') return { type: 'text', text: b.text ?? '' };
-          if (b.type === 'thinking') return { type: 'thinking', thinking: b.thinking ?? '', ...(b.signature ? { signature: b.signature } : {}) };
-          if (b.type === 'tool_use') {
-            let input: unknown = {};
-            try { input = JSON.parse(b.inputJson ?? '{}'); } catch { input = b.inputJson ?? {}; }
-            return { type: 'tool_call', id: b.id!, name: b.name!, input };
-          }
-          return { type: 'text', text: '' };
-        });
-        events.push({ type: 'done', message: { role: 'assistant', content } });
-        break;
-      }
       case 'error': {
-        const err = p.error as { message?: string };
+        const err = payload.error as { message?: string };
         events.push({ type: 'error', error: new AiError('server', err?.message ?? 'unknown error') });
         break;
       }
       default:
         break;
     }
+    return events;
   }
+
+  /** Terminal 'done' event built from accumulated block state. */
+  done(): StreamEvent[] {
+    if (this.doneEmitted) return [];
+    this.doneEmitted = true;
+    const content: import('../types.ts').ContentBlock[] = this.blocks.map((b) => {
+      if (b.type === 'text') return { type: 'text', text: b.text ?? '' };
+      if (b.type === 'thinking') return { type: 'thinking', thinking: b.thinking ?? '', ...(b.signature ? { signature: b.signature } : {}) };
+      if (b.type === 'tool_use') {
+        let input: unknown = {};
+        try { input = JSON.parse(b.inputJson ?? '{}'); } catch { input = b.inputJson ?? {}; }
+        return { type: 'tool_call', id: b.id ?? '', name: b.name ?? 'unknown', input };
+      }
+      return { type: 'text', text: '' };
+    });
+    return [{ type: 'done', message: { role: 'assistant', content } }];
+  }
+}
+
+export function anthropicEventsToIR(payloads: Record<string, unknown>[]): StreamEvent[] {
+  const converter = new AnthropicSSEConverter();
+  const events: StreamEvent[] = [];
+  for (const p of payloads) events.push(...converter.push(p));
+  events.push(...converter.done());
   return events;
 }
 
@@ -206,20 +223,27 @@ export function createAnthropicClient(config: AnthropicClientConfig): import('..
         throw e;
       }
       try {
-        // Blocks accumulate across payloads (content_block_delta references the
-        // block opened by an earlier content_block_start), so buffer all payloads
-        // and run the batch converter once at the terminal event.
-        const accumulated: Record<string, unknown>[] = [];
+        // Stateful converter: yields events per payload (like OpenAI) instead
+        // of buffering everything until message_stop. This prevents data loss
+        // on mid-stream interruptions — deltas already yielded survive.
+        const converter = new AnthropicSSEConverter();
         for await (const data of parseSseStream(stream)) {
           if (!data) continue;
           let payload: Record<string, unknown>;
           try { payload = JSON.parse(data); } catch { throw new AiError('parse', `bad SSE JSON: ${data.slice(0, 100)}`); }
-          accumulated.push(payload);
-          if (payload.type === 'message_stop' || payload.type === 'error') {
-            for (const ev of anthropicEventsToIR(accumulated)) yield ev;
-            accumulated.length = 0;
+          for (const ev of converter.push(payload)) yield ev;
+          if (payload.type === 'message_stop') {
+            yield* converter.done();
+            return;
+          }
+          if (payload.type === 'error') {
+            // Yield accumulated content before error so partial response is not lost
+            yield* converter.done();
+            return;
           }
         }
+        // Stream ended without message_stop (connection close) — synthesize done
+        yield* converter.done();
       } catch (e) {
         if (e instanceof AiError) { yield { type: 'error', error: e }; return; }
         throw e;

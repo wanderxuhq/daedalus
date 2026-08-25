@@ -61,6 +61,26 @@ async function nextMessage(ws: WebSocket, type: string, timeoutMs = 1000): Promi
   });
 }
 
+/** Wait for a message where type==='event' and ev.type matches the given inner type. */
+async function waitForEvType(ws: WebSocket, evType: string, timeoutMs = 1000): Promise<any> {
+  const q = queues.get(ws)!;
+  // Check already-queued messages first
+  const i = q.findIndex((m) => m?.type === 'event' && m?.ev?.type === evType);
+  if (i >= 0) return q.splice(i, 1)[0];
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => { ws.off('message', onMsg); reject(new Error(`timeout waiting for ev.type=${evType}`)); }, timeoutMs);
+    const onMsg = () => {
+      const idx = q.findIndex((m) => m?.type === 'event' && m?.ev?.type === evType);
+      if (idx >= 0) {
+        clearTimeout(timer);
+        ws.off('message', onMsg);
+        resolve(q.splice(idx, 1)[0]);
+      }
+    };
+    ws.on('message', onMsg);
+  });
+}
+
 function fakeEngine() {
   return {
     getSessionState: () => ({
@@ -273,6 +293,133 @@ test('subagent events recoverable after reconnect', async () => {
     const snap = await nextMessage(ws, 'snapshot');
     // The snapshot should contain subagent info
     assert.ok(snap.subagents.length >= 1, 'snapshot should contain subagent info');
+  } finally {
+    ws?.close();
+    await http.close();
+  }
+});
+
+test('reconnect after done clears log: client B gets clean snapshot', async () => {
+  const http = new HttpServer({ staticDir: process.cwd() });
+  const hub = new WebSocketHub({ engine: fakeEngine() as any, hub: new EventHub(), permission: new WebPermissionManager() });
+  hub.attach(http);
+  let ws: WebSocket | undefined;
+  try {
+    // Push subagent + main-session events before any client connects
+    hub.broadcastEvent({ type: 'delegate_start', agent: 'worker-1', task: 'test task' });
+    hub.broadcastEvent({ type: 'text_delta', text: 'chunk a' });
+
+    // Client A connects and sees everything
+    ws = await connect(hub, http);
+    const snapA = await nextMessage(ws, 'snapshot');
+    assert.equal(snapA.running, true);
+    // Subagent events are broadcast but NOT in the main log (they don't affect running state)
+    assert.equal(snapA.log.length, 1, 'client A snapshot has 1 log entry (text_delta only; subagent events not in main log)');
+    assert.equal(snapA.subagents.length, 1);
+    assert.equal(snapA.subagents[0].name, 'worker-1');
+
+    // Client A disconnects
+    ws.close();
+    await new Promise((r) => setTimeout(r, 100));
+
+    // Main-session done event arrives — clears the log
+    hub.broadcastEvent({ type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'ok' }] } });
+
+    // Client B connects — should see a clean state, not stale log entries
+    const { port } = http.address() as { port: number };
+    const wsB = await new Promise<WebSocket>((resolve) => {
+      const w = new WebSocket(`ws://127.0.0.1:${port}/api/ws`);
+      startCollector(w);
+      w.on('open', () => resolve(w));
+    });
+    try {
+      const snapB = await nextMessage(wsB, 'snapshot');
+      assert.equal(snapB.running, false, 'client B snapshot should have running=false after done');
+      assert.equal(snapB.log.length, 0, 'client B snapshot should have empty log after done clears it');
+      // Subagent state is preserved in EventHub (independent of main log)
+      assert.equal(snapB.subagents.length, 1, 'subagent tracking survives main-session done');
+      assert.equal(snapB.subagents[0].name, 'worker-1');
+    } finally {
+      wsB.close();
+    }
+  } finally {
+    ws?.close();
+    await http.close();
+  }
+});
+
+test('done event arrives while client is connected: client receives it and snapshot is consistent', async () => {
+  const http = new HttpServer({ staticDir: process.cwd() });
+  const hub = new WebSocketHub({ engine: fakeEngine() as any, hub: new EventHub(), permission: new WebPermissionManager() });
+  hub.attach(http);
+  let ws: WebSocket | undefined;
+  try {
+    ws = await connect(hub, http);
+    await nextMessage(ws, 'snapshot');
+
+    // Push some events so the log is non-empty
+    hub.broadcastEvent({ type: 'text_delta', text: 'hello' });
+    hub.broadcastEvent({ type: 'tool_call_start', id: '1', name: 'bash' });
+
+    // Now send the terminal done event — the log should be cleared on the server side,
+    // but the connected client must still receive the done event.
+    hub.broadcastEvent({ type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] } });
+
+    // Client must receive the done event even though the log was just cleared
+    const doneEv = await waitForEvType(ws, 'done');
+    assert.equal(doneEv.type, 'event');
+    assert.equal(doneEv.ev.type, 'done');
+
+    // After the done event, the server log is empty.
+    // Any subsequent snapshot must reflect this clean state.
+    hub.broadcastSnapshot();
+    const snap = await nextMessage(ws, 'snapshot');
+    assert.equal(snap.running, false, 'snapshot after done should have running=false');
+    assert.equal(snap.log.length, 0, 'snapshot after done should have empty log');
+  } finally {
+    ws?.close();
+    await http.close();
+  }
+});
+
+test('slow client still receives done event when server log is cleared concurrently', async () => {
+  const http = new HttpServer({ staticDir: process.cwd() });
+  const hub = new WebSocketHub({ engine: fakeEngine() as any, hub: new EventHub(), permission: new WebPermissionManager() });
+  hub.attach(http);
+  let ws: WebSocket | undefined;
+  try {
+    ws = await connect(hub, http);
+    await nextMessage(ws, 'snapshot');
+
+    // Slow down this client's send buffer to simulate a slow consumer
+    const origSend = ws.send.bind(ws);
+    (ws as any).send = (data: any, cb?: any) => {
+      setTimeout(() => origSend(data, cb), 50);
+    };
+
+    // The terminal event is sent to the client (via the slowed send),
+    // and the server log is cleared immediately.
+    hub.broadcastEvent({ type: 'done', message: { role: 'assistant', content: [{ type: 'text', text: 'done' }] } });
+
+    // Even though the send is delayed, the client should eventually receive the event
+    const doneEv = await nextMessage(ws, 'event', 2000);
+    assert.equal(doneEv.type, 'event');
+    assert.equal(doneEv.ev.type, 'done', 'slow client must still receive the done event');
+
+    // Now connect a second client — the server log should be empty
+    const { port } = http.address() as { port: number };
+    const wsB = await new Promise<WebSocket>((resolve) => {
+      const w = new WebSocket(`ws://127.0.0.1:${port}/api/ws`);
+      startCollector(w);
+      w.on('open', () => resolve(w));
+    });
+    try {
+      const snapB = await nextMessage(wsB, 'snapshot');
+      assert.equal(snapB.running, false, 'second client should see running=false');
+      assert.equal(snapB.log.length, 0, 'second client should see empty log');
+    } finally {
+      wsB.close();
+    }
   } finally {
     ws?.close();
     await http.close();

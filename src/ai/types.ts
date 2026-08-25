@@ -7,6 +7,8 @@ export type ContentBlock =
 export interface Message {
   role: 'system' | 'user' | 'assistant';
   content: ContentBlock[];
+  /** Stable identity for dedup across deep clones (snapshots). Assigned by Session. */
+  _id?: number;
 }
 
 export interface ToolDefinition {

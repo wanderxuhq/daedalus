@@ -25,7 +25,7 @@ export function buildServer(deps: ServerDeps): {
 } {
   const http = new HttpServer({ staticDir: deps.staticDir ?? staticDirFor(import.meta.url) });
   const hub = new EventHub();
-  const permission = new WebPermissionManager(deps.engine);
+  const permission = new WebPermissionManager({ engine: deps.engine });
   const wsHub = new WebSocketHub({ engine: deps.engine, hub, permission });
   wsHub.attach(http);
   registerAll(http, { engine: deps.engine, store: deps.store, hub: wsHub });
@@ -84,7 +84,7 @@ export async function main(argv: string[]): Promise<void> {
   const srv = buildServer({ engine, store });
 
   const shutdown = async () => {
-    srv.http.close();
+    await srv.http.close();
     await engine.dispose();
     process.exit(0);
   };

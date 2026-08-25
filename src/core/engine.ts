@@ -202,6 +202,9 @@ export class DaedalusEngine {
       getMainHistory: () => this.session.getMessages(),
       // Enable automatic summarization of main history for subagent context
       enableAutoSummary: opts.enableAutoSummary !== false,
+      // Shared summary cache: avoids redundant LLM calls when main conversation
+      // hasn't changed between consecutive delegate calls.
+      summaryCache: { key: '', summary: '' },
     };
     // Store delegate options for restarting subagents when user sends messages.
     this.delegateOptions = delegateOptions;
@@ -216,6 +219,7 @@ export class DaedalusEngine {
         // The clone may use the full builtin set, but NEVER delegate — no recursion.
         availableTools: builtinTools,
         maxContextTokens: opts.maxContextTokens,
+        ...(this.model !== undefined ? { model: this.model } : {}),
         thinking: { enabled: this.thinking, ...(this.thinkingBudgetTokens !== undefined ? { budgetTokens: this.thinkingBudgetTokens } : {}) },
         locks: this.locks,
         undo: this.undo,
@@ -312,11 +316,14 @@ export class DaedalusEngine {
     }
     const session = this.sessionPool.get(name);
     // If the session is empty, it needs a system prompt (this shouldn't happen
-    // for user-initiated messages, but handle defensively).
+    // for user-initiated messages, but handle defensively). Use the stored prompt
+    // from the original delegate call to ensure consistency (tools, json mode, etc.).
     if (session.getMessages().length === 0) {
+      const promptText = session.systemPromptText
+        ?? buildSubagentPrompt({ memory: this.delegateOptions.memory });
       session.addMessage({
         role: 'system',
-        content: [{ type: 'text', text: buildSubagentPrompt({ memory: this.delegateOptions.memory }) }],
+        content: [{ type: 'text', text: promptText }],
       });
     }
     this.runningSubagents.add(name);
@@ -347,26 +354,30 @@ export class DaedalusEngine {
     }).then(() => {
       unsub();
       this.runningSubagents.delete(name);
-      // Check if there are pending messages that arrived while the loop was running.
-      // If so, restart the loop to process them.
-      if (session.hasPendingMessages()) {
-        this.startSubagentLoop(name);
-      } else {
-        // Emit done event so the UI knows the subagent finished
-        this.session.bus.emit({ type: 'done', agent: name, message: { role: 'assistant', content: [{ type: 'text', text: '' }] } });
-      }
+      // Defer the restart check so that a concurrent injectSubagentMessage
+      // completes before we decide whether to restart. Without this, the
+      // delete + hasPendingMessages window allows a race where two loops
+      // start for the same session.
+      queueMicrotask(() => {
+        if (session.hasPendingMessages()) {
+          this.startSubagentLoop(name);
+        }
+      });
+      // Note: the loop's session bus already emitted the 'done' event (forwarded
+      // to the main bus via the unsub subscriber above). We must NOT emit a second
+      // 'done' here — it would create duplicate events in the UI.
     }).catch((err) => {
       unsub();
       this.runningSubagents.delete(name);
-      // Check if there are pending messages that arrived while the loop was running.
-      // If so, restart the loop to process them.
-      if (session.hasPendingMessages()) {
-        this.startSubagentLoop(name);
-      } else {
-        // Emit error event so the UI knows the subagent failed
-        const aiErr = err instanceof AiError ? err : new AiError('server', (err as Error).message);
-        this.session.bus.emit({ type: 'error', agent: name, error: aiErr });
-      }
+      queueMicrotask(() => {
+        if (session.hasPendingMessages()) {
+          this.startSubagentLoop(name);
+        } else {
+          // Emit error event so the UI knows the subagent failed
+          const aiErr = err instanceof AiError ? err : new AiError('server', (err as Error).message);
+          this.session.bus.emit({ type: 'error', agent: name, error: aiErr });
+        }
+      });
     });
   }
 
@@ -537,8 +548,8 @@ export class DaedalusEngine {
     } catch {
       // Summarizer failed (network, provider, …): fall through to a hard trim.
     }
-    const trimmed = trimHistory(before, { maxTokens: this.maxContextTokens });
-    if (trimmed !== before) {
+    const trimmed = trimHistory(this.session.getMessages(), { maxTokens: this.maxContextTokens });
+    if (trimmed !== this.session.getMessages()) {
       this.session.replaceMessages(trimmed);
       this.session.bus.emit({
         type: 'context_trim',

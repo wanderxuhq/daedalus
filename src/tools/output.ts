@@ -17,7 +17,7 @@ const spilled = new Set<string>();
 // The 'exit' hook is a safety net (a hard Ctrl+C / SIGTERM skips engine
 // dispose); each module load adds one listener, which is harmless (rm is
 // idempotent). The real cleanup happens in engine.dispose via clearSpilledOutputs.
-process.on('exit', () => { for (const f of spilled) rmSync(f, { force: true }); });
+process.once('exit', () => { for (const f of spilled) rmSync(f, { force: true }); });
 
 /** Delete every spilled tool-output file (engine dispose). */
 export function clearSpilledOutputs(): void {

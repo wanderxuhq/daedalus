@@ -1,19 +1,19 @@
 import type { HttpServer } from './http.ts';
 import type { CoreEvent } from '../core/events.ts';
-import type { EventHub, SubagentTracked } from './event-hub.ts';
+import { TERMINALS } from '../core/events.ts';
+import type { EventHub } from './event-hub.ts';
+import type { SubagentInfo } from '../core/events.ts';
 import type { DaedalusEngine } from '../core/engine.ts';
 import type { WebPermissionManager } from './permission.ts';
 
 export interface SnapshotPayload {
   messages: unknown[];
-  subagents: SubagentTracked[];
+  subagents: SubagentInfo[];
   running: boolean;
   log: CoreEvent[];
   pendingPermission: { id: string; action: string; target: string } | null;
+  error: string | null;
 }
-
-/** Event that ends the current turn: clears in-flight log and removes all pending permissions upon receipt. */
-const TERMINALS: ReadonlySet<CoreEvent['type']> = new Set(['done', 'error']);
 
 /** WebSocket hub: sends snapshot on connect; broadcasts all CoreEvents; forwards permission requests/responses. */
 export class WebSocketHub {
@@ -22,6 +22,8 @@ export class WebSocketHub {
   private permission: WebPermissionManager;
   private log: CoreEvent[] = [];
   private clients = new Set<import('ws').WebSocket>();
+  /** Last error message (for snapshot; cleared on new session_start). */
+  private lastError: string | null = null;
   /** Interval in ms between heartbeat pings sent to each client. */
   private pingInterval: number;
   /** Time in ms to wait for a pong response before closing a dead connection. */
@@ -82,8 +84,12 @@ export class WebSocketHub {
       messages: this.engine.getSessionState().messages.filter((m) => m.role !== 'system'),
       subagents: this.hub.list(),
       running,
-      log: [...this.log],
+      // Filter out stale turn_done events: after a reconnect, the snapshot's messages
+      // already contain the committed assistant messages. Replaying turn_done from the
+      // log would cause duplicates (even with ID dedup, it's cleaner to omit them).
+      log: this.log.filter((ev) => ev.type !== 'turn_done'),
       pendingPermission: this.permission.pending(),
+      error: this.lastError,
     };
   }
 
@@ -99,15 +105,25 @@ export class WebSocketHub {
 
   broadcastEvent(ev: CoreEvent): void {
     this.hub.handle(ev);
-    // Subagent events don't enter the main session log or trigger main session termination logic.
+    // Subagent events don't enter the main session log or affect running state.
+    // Only broadcast to clients — the EventHub tracks subagent state separately.
     if (ev.agent !== undefined) {
-      this.log.push(ev);
       for (const c of this.clients) this.sendEvent(c, ev);
       return;
     }
     if (TERMINALS.has(ev.type)) {
       this.log = [];
       this.permission.clearAll();
+      // Track error state for snapshots of reconnecting clients
+      if (ev.type === 'error') {
+        this.lastError = ev.error.message;
+      } else {
+        this.lastError = null; // 'done' clears previous error
+      }
+    } else if (ev.type === 'session_start') {
+      // New session clears previous error
+      this.lastError = null;
+      this.log.push(ev);
     } else {
       // turn_done is a non-terminal event: message lands in UI, but engine keeps running
       this.log.push(ev);
