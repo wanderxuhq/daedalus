@@ -1,4 +1,5 @@
 import type { CoreEvent } from '../../src/core/events.ts';
+import type { Message } from './types/messages.ts';
 
 export type EventEnvelope =
   | { type: 'event'; ev: CoreEvent }
@@ -9,7 +10,7 @@ export type EventEnvelope =
 export type ChatResult = { status: 'ok'; result: string } | { status: 'error'; error: string };
 
 export interface SnapshotPayload {
-  messages: unknown[];
+  messages: Message[];
   subagents: Array<{ name: string; task: string; status: string; messageCount: number; loadedSkills: string[] }>;
   running: boolean;
   log: CoreEvent[];

@@ -1,4 +1,5 @@
 import { createSignal, Show } from 'solid-js';
+import type { ToolInfo } from '../../types/messages.ts';
 
 export function DiffBlock(props: { diff: string }) {
   return (
@@ -10,7 +11,7 @@ export function DiffBlock(props: { diff: string }) {
   );
 }
 
-export function ToolCard(props: { tool: any; status: 'running' | 'done' | 'error' }) {
+export function ToolCard(props: { tool: ToolInfo; status: 'running' | 'done' | 'error' }) {
   const [open, setOpen] = createSignal(false);
   const inputPreview = () => {
     try { return JSON.stringify(props.tool.input).slice(0, 120); } catch { return String(props.tool.input); }
@@ -21,11 +22,11 @@ export function ToolCard(props: { tool: any; status: 'running' | 'done' | 'error
       <span class="tool-input-preview">{inputPreview()}</span>
       <Show when={open()}>
         <div class="tool-body">
-          <Show when={props.tool.resultContent}>
-            <pre class="tool-content">{props.tool.resultContent}</pre>
+          <Show when={props.tool.content}>
+            <pre class="tool-content">{props.tool.content}</pre>
           </Show>
           <Show when={props.tool.diff}>
-            <DiffBlock diff={props.tool.diff} />
+            <DiffBlock diff={props.tool.diff!} />
           </Show>
         </div>
       </Show>
