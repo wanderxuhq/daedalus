@@ -7,8 +7,16 @@ marked.setOptions({
 });
 
 export function StreamText(props: { text: string }) {
-  // Sanitize HTML to prevent XSS attacks
-  const rawHtml = marked.parse(props.text) as string;
-  const sanitizedHtml = DOMPurify.sanitize(rawHtml);
-  return <div class="msg-text markdown-body" innerHTML={sanitizedHtml} />;
+  const unsafeHtml = marked.parse(props.text) as string;
+  const safeHtml = DOMPurify.sanitize(unsafeHtml, {
+    ALLOWED_TAGS: [
+      'h1', 'h2', 'h3', 'h4', 'h5', 'h6',
+      'p', 'br', 'hr', 'ul', 'ol', 'li',
+      'blockquote', 'pre', 'code', 'em', 'strong',
+      'del', 'a', 'img', 'table', 'thead', 'tbody',
+      'tr', 'th', 'td', 'div', 'span',
+    ],
+    ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class'],
+  });
+  return <div class="msg-text markdown-body" innerHTML={safeHtml} />;
 }

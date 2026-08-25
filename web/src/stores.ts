@@ -1,6 +1,8 @@
 import { createSignal } from 'solid-js';
 import { initialUiState, applyEnvelope, mergeSnapshot, submitPrompt as submitPromptModel, submitSubagentPrompt as submitSubagentPromptModel, type UiState } from './state-model.ts';
 import type { EventEnvelope } from './types.ts';
+import type { Message } from './types/messages.ts';
+import type { CoreEvent } from '../../src/core/events.ts';
 
 export const [state, setState] = createSignal<UiState>(initialUiState());
 
@@ -34,7 +36,7 @@ export function setViewingSubagent(name: string | null): void {
 }
 
 /** 设置子代理历史消息（从 API 加载后）。 */
-export function setSubagentMessages(msgs: unknown[]): void {
+export function setSubagentMessages(msgs: (Message | CoreEvent)[]): void {
   setState((s) => ({ ...s, subagentMessages: msgs }));
 }
 
@@ -48,7 +50,7 @@ export function removeLastUserMessage(): void {
   setState((s) => {
     const messages = [...s.messages];
     for (let i = messages.length - 1; i >= 0; i--) {
-      if ((messages[i] as any).role === 'user') {
+      if (messages[i].role === 'user') {
         messages.splice(i, 1);
         return { ...s, messages };
       }

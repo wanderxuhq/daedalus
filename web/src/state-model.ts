@@ -2,6 +2,7 @@ import type { CoreEvent, SubagentInfo as SubagentInfoBase } from '../../src/core
 import { TERMINALS } from '../../src/core/events.ts';
 import type { EventEnvelope, SnapshotPayload } from './types.ts';
 import type { Message } from '../../src/ai/types.ts';
+import type { StreamingMessage, StreamingContentBlock } from './types/messages.ts';
 
 export interface SubagentInfo extends SubagentInfoBase {
   /** 该 agent 的实时 CoreEvent 累积（detail 页 live 渲染用；snapshot 重置）。 */
@@ -10,7 +11,7 @@ export interface SubagentInfo extends SubagentInfoBase {
 
 export interface UiState {
   /** 渲染列表：快照回填的存量消息 + 本地回显的用户消息 + done 落地的回复。 */
-  messages: unknown[];
+  messages: Message[];
   subagents: SubagentInfo[];
   running: boolean;
   log: CoreEvent[];
@@ -21,9 +22,9 @@ export interface UiState {
   /** 当前正在查看的子代理名称，null 表示查看主会话。 */
   viewingSubagent: string | null;
   /** 当前查看的子代理的消息列表。 */
-  subagentMessages: unknown[];
+  subagentMessages: (Message | CoreEvent)[];
   /** 当前正在流式输出的助手消息（实时渲染用）。 */
-  streamingMessage: { role: string; content: unknown[] } | null;
+  streamingMessage: StreamingMessage | null;
 }
 
 export function initialUiState(): UiState {
@@ -50,11 +51,11 @@ export function submitSubagentPrompt(state: UiState, prompt: string): UiState {
 }
 
 /** 更新流式消息：根据事件类型累积文本、思考和工具调用。 */
-function updateStreamingMessage(state: UiState, ev: CoreEvent): { role: string; content: unknown[] } | null {
+function updateStreamingMessage(state: UiState, ev: CoreEvent): StreamingMessage | null {
   // 如果没有流式消息且事件是文本/思考/工具调用开始，创建新的流式消息
   if (!state.streamingMessage) {
     if (ev.type === 'text_delta' || ev.type === 'thinking_delta' || ev.type === 'tool_call_start') {
-      const content: unknown[] = [];
+      const content: StreamingContentBlock[] = [];
       if (ev.type === 'text_delta') {
         content.push({ type: 'text', text: ev.text });
       } else if (ev.type === 'thinking_delta') {
@@ -72,10 +73,10 @@ function updateStreamingMessage(state: UiState, ev: CoreEvent): { role: string; 
   switch (ev.type) {
     case 'text_delta': {
       // 查找最后一个文本块并追加（clone to avoid mutating the original）
-      const lastText = [...content].reverse().find((c: any) => c.type === 'text');
-      if (lastText) {
+      const lastText = [...content].reverse().find(c => c.type === 'text');
+      if (lastText && lastText.type === 'text') {
         const idx = content.indexOf(lastText);
-        content[idx] = { ...(lastText as any), text: (lastText as any).text + ev.text };
+        content[idx] = { ...lastText, text: lastText.text + ev.text };
       } else {
         content.push({ type: 'text', text: ev.text });
       }
@@ -83,10 +84,10 @@ function updateStreamingMessage(state: UiState, ev: CoreEvent): { role: string; 
     }
     case 'thinking_delta': {
       // 查找最后一个思考块并追加（clone to avoid mutating the original）
-      const lastThinking = [...content].reverse().find((c: any) => c.type === 'thinking');
-      if (lastThinking) {
+      const lastThinking = [...content].reverse().find(c => c.type === 'thinking');
+      if (lastThinking && lastThinking.type === 'thinking') {
         const idx = content.indexOf(lastThinking);
-        content[idx] = { ...(lastThinking as any), thinking: (lastThinking as any).thinking + ev.thinking };
+        content[idx] = { ...lastThinking, thinking: lastThinking.thinking + ev.thinking };
       } else {
         content.push({ type: 'thinking', thinking: ev.thinking });
       }
@@ -99,20 +100,20 @@ function updateStreamingMessage(state: UiState, ev: CoreEvent): { role: string; 
     }
     case 'tool_call_delta': {
       // 更新工具调用的输入（clone to avoid mutating the original）
-      const toolCall = content.find((c: any) => c.type === 'tool_call' && c.id === ev.id);
-      if (toolCall) {
+      const toolCall = content.find(c => c.type === 'tool_call' && c.id === ev.id);
+      if (toolCall && toolCall.type === 'tool_call') {
         const idx = content.indexOf(toolCall);
-        content[idx] = { ...(toolCall as any), input: (toolCall as any).input + ev.inputDelta };
+        content[idx] = { ...toolCall, input: toolCall.input + ev.inputDelta };
       }
       break;
     }
     case 'tool_result': {
       // 更新工具调用状态为完成（clone to avoid mutating the original）
-      const toolCall = content.find((c: any) => c.type === 'tool_call' && c.id === ev.id);
-      if (toolCall) {
+      const toolCall = content.find(c => c.type === 'tool_call' && c.id === ev.id);
+      if (toolCall && toolCall.type === 'tool_call') {
         const idx = content.indexOf(toolCall);
         content[idx] = {
-          ...(toolCall as any),
+          ...toolCall,
           status: ev.isError ? 'error' : 'done',
           resultContent: ev.content,
           ...(ev.diff !== undefined ? { diff: ev.diff } : {}),
@@ -200,8 +201,8 @@ export function mergeSnapshot(state: UiState, snap: SnapshotPayload): UiState {
     ...state,
     // 过滤掉不含文本内容的 user 消息（仅包含 tool_result 的消息），
     // 保持与 live session 行为一致——这些消息在实时流中不会出现在渲染列表中。
-    messages: snap.messages.filter((m: any) =>
-      m.role !== 'user' || m.content.some((c: any) => c.type === 'text'),
+    messages: snap.messages.filter(m =>
+      m.role !== 'user' || m.content.some(c => c.type === 'text'),
     ),
     subagents: snap.subagents.map((a) => ({
       name: a.name, task: a.task,

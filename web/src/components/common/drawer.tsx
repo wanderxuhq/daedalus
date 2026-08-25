@@ -1,7 +1,7 @@
-import { Show } from 'solid-js';
+import { Show, type JSX } from 'solid-js';
 import { t } from '../../i18n.ts';
 
-export function Drawer(props: { open: boolean; onClose: () => void; children: any }) {
+export function Drawer(props: { open: boolean; onClose: () => void; children: JSX.Element }) {
   return (
     <Show when={props.open}>
       <div class="drawer-backdrop" onClick={props.onClose} />
@@ -13,8 +13,8 @@ export function Drawer(props: { open: boolean; onClose: () => void; children: an
 export function AppDrawer(props: {
   open: boolean;
   onClose: () => void;
-  sessionContent: any;
-  subagentContent: any;
+  sessionContent: JSX.Element;
+  subagentContent: JSX.Element;
 }) {
   return (
     <Show when={props.open}>
