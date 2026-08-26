@@ -93,11 +93,11 @@ export function ToolCard(props: { tool: ToolInfo; status: 'running' | 'done' | '
       <span class="tool-input-preview">{preview()}</span>
       <Show when={open()}>
         <div class="tool-body">
-          <Show when={props.tool.content}>
-            <pre class="tool-content">{props.tool.content}</pre>
-          </Show>
           <Show when={props.tool.diff}>
             <DiffBlock diff={props.tool.diff!} />
+          </Show>
+          <Show when={!props.tool.diff && props.tool.content}>
+            <pre class="tool-content">{props.tool.content}</pre>
           </Show>
         </div>
       </Show>
