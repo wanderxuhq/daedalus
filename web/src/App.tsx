@@ -1,7 +1,7 @@
 import { createSignal, createEffect, createMemo, For, Show } from 'solid-js';
 import { state, handleEnvelope, setAutoApproveLocal, submitPrompt, removeLastUserMessage } from './stores.ts';
 import { AiError } from '../../src/ai/errors.ts';
-import { chat, resumeSession, putConfig, getConfig } from './api.ts';
+import { chat, resumeSession, putConfig, getConfig, abortAgent } from './api.ts';
 import { connectWs, sendWsMessage, requestReconnect, type WsStatus } from './ws.ts';
 import { parseHash, onHashChange, type Route } from './routes.ts';
 import { useIsNarrow } from './use-is-narrow.ts';
@@ -56,6 +56,9 @@ export function App() {
     } catch (e) {
       // 恢复失败时不做额外处理，用户可以重试
     }
+  };
+  const onAbort = async (name?: string) => {
+    await abortAgent(name).catch(() => {});
   };
   const navigateToAgent = (name: string) => {
     location.hash = `#/agent/${encodeURIComponent(name)}`;
@@ -115,14 +118,14 @@ export function App() {
               <PermissionCard pending={state().pendingPermission} send={(m) => sendWsMessage(m)} />
             </Show>
           </div>
-          {!isNarrow() && <SubagentPanel subagents={state().subagents} onView={navigateToAgent} />}
+          {!isNarrow() && <SubagentPanel subagents={state().subagents} onView={navigateToAgent} onAbort={(name) => onAbort(name)} />}
         </div>
         {isNarrow() && (
           <Drawer open={drawerOpen()} onClose={() => setDrawerOpen(false)}>
-            <SubagentPanel subagents={state().subagents} onView={navigateToAgent} />
+            <SubagentPanel subagents={state().subagents} onView={navigateToAgent} onAbort={(name) => onAbort(name)} />
           </Drawer>
         )}
-        <ChatInput disabled={state().running} autoApprove={state().autoApprove} onSend={onSend} onToggleAuto={onToggleAuto} onResumeSession={onResumeSession} />
+        <ChatInput disabled={state().running} autoApprove={state().autoApprove} onSend={onSend} onToggleAuto={onToggleAuto} onAbort={() => onAbort()} onResumeSession={onResumeSession} />
       </div>
     </Show>
   );

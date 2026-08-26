@@ -51,6 +51,7 @@ export function connectWs(opts: {
     currentWs = ws;
     ws.onopen = () => { backoff = 1000; activeSend = (raw) => ws!.send(raw); opts.onStatus('open'); };
     ws.onmessage = (m) => {
+      lastMessageAt = Date.now();
       const env = parseMessage(String(m.data));
       if (env) opts.onEnvelope(env);
     };
@@ -67,17 +68,33 @@ export function connectWs(opts: {
     ws.onerror = () => ws!.close();
   };
 
-  // 页面从后台回到前台时，如果 WebSocket 断开则主动重连
+  // 页面从后台回到前台时，确保能收到最新消息。
+  // 如果 WebSocket 断开了，立即重连获取 snapshot；
+  // 如果还活着，发送一个 ping 等待 pong，超时则认为连接已死，强制重连。
+  let lastMessageAt = Date.now();
   const onVisibilityChange = () => {
-    if (document.visibilityState === 'visible' && !closed && (!ws || ws.readyState !== WebSocket.OPEN)) {
-      // 清除现有的重连定时器
-      if (timer) {
-        clearTimeout(timer);
-        timer = null;
-      }
-      // 重置退避时间，立即重连
+    if (document.visibilityState !== 'visible' || closed) return;
+    // 清除现有的重连定时器
+    if (timer) { clearTimeout(timer); timer = null; }
+
+    const doReconnect = () => {
+      if (ws) { ws.close(); ws = null; activeSend = null; currentWs = null; }
       backoff = 1000;
       open();
+    };
+
+    if (!ws || ws.readyState !== WebSocket.OPEN) {
+      // 连接已断开，立即重连
+      doReconnect();
+    } else {
+      // 连接还活着——等 500ms 看是否有新消息到达；
+      // 如果这段时间没收到任何消息，说明连接可能是僵尸，强制重连。
+      const prev = lastMessageAt;
+      setTimeout(() => {
+        // 连接已关闭或收到了新消息，不需要重连
+        if (!ws || ws.readyState !== WebSocket.OPEN || lastMessageAt > prev) return;
+        doReconnect();
+      }, 500);
     }
   };
 

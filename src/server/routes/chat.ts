@@ -25,5 +25,10 @@ export function registerChatRoutes(http: HttpServer, engine: DaedalusEngine, hub
       inFlight = false;
     }
   });
+  // POST /api/chat/abort — cancel the in-flight engine.run().
+  http.post('/api/chat/abort', async () => {
+    engine.abort();
+    return { status: 'ok' };
+  });
   // Engine events → ws broadcast (wired in server.ts via engine.subscribe; chat route only handles run)
 }

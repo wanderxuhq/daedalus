@@ -8,6 +8,7 @@ export function SubagentPanel(props: {
   viewingSubagent?: string | null;
   onView?: (name: string) => void;
   onReturnToMain?: () => void;
+  onAbort?: (name: string) => void;
   currentSessionTitle?: string;
 }) {
   return (
@@ -27,7 +28,7 @@ export function SubagentPanel(props: {
             class={`delegate-row ${props.onView ? 'clickable' : ''} ${props.viewingSubagent === a.name ? 'active' : ''}`}
             onClick={() => props.onView?.(a.name)}
           >
-            <DelegateRow name={a.name} task={a.task} status={a.status} />
+            <DelegateRow name={a.name} task={a.task} status={a.status} onAbort={props.onAbort} />
           </div>
         )}
       </For>

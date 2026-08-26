@@ -82,6 +82,18 @@ test('POST /api/chat returns 409 while a run is in flight', async () => {
   });
 });
 
+test('POST /api/chat/abort calls engine.abort()', async () => {
+  let aborted = false;
+  const engine = fakeEngine();
+  engine.abort = () => { aborted = true; };
+  await withRoutes(engine, fakeStore(), {}, async (base) => {
+    const res = await fetch(`${base}/api/chat/abort`, { method: 'POST' });
+    assert.equal(res.status, 200);
+    assert.deepEqual(await res.json(), { status: 'ok' });
+    assert.equal(aborted, true);
+  });
+});
+
 test('GET /api/sessions returns titles from the store', async () => {
   const store = fakeStore({ sessions: [{ id: 's1', updatedAt: '2026-01-01', title: 'Hello', messageCount: 3 }] });
   await withRoutes(fakeEngine(), store, {}, async (base) => {

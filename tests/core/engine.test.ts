@@ -436,8 +436,46 @@ test('run forwards an AbortSignal to the client', async () => {
     },
   }));
   await engine.run('hi', { signal: ac.signal });
-  assert.ok(gotSignal === ac.signal);
+  // The engine wraps the caller signal with AbortSignal.any() to merge with its
+  // internal abort controller, so identity is no longer preserved — but abort
+  // propagation must work.
+  assert.ok(gotSignal, 'signal should be forwarded to streamChat');
+  assert.equal(gotSignal!.aborted, false);
+  ac.abort();
+  assert.equal(gotSignal!.aborted, true);
   await engine.dispose();
+});
+
+test('abort() cancels a running agent loop and isRunning reflects state', async () => {
+  let release!: () => void;
+  const engine = new DaedalusEngine(opts({
+    client: {
+      async *streamChat(params) {
+        // Wait for abort signal before yielding
+        await new Promise<void>((resolve) => {
+          params.signal?.addEventListener('abort', () => resolve());
+        });
+        throw new DOMException('This operation was aborted', 'AbortError');
+      },
+    },
+  }));
+  assert.equal(engine.isRunning(), false);
+  const runPromise = engine.run('long task');
+  // Give the run a tick to enter the streaming loop
+  await new Promise((r) => setTimeout(r, 10));
+  assert.equal(engine.isRunning(), true);
+  engine.abort();
+  await assert.rejects(runPromise, (e: unknown) => (e as Error).name === 'AbortError');
+  assert.equal(engine.isRunning(), false);
+  await engine.dispose();
+});
+
+test('abort() is a no-op when idle', () => {
+  const engine = new DaedalusEngine(opts());
+  engine.abort(); // should not throw
+  assert.equal(engine.isRunning(), false);
+  // dispose() must not fail after abort when idle
+  return engine.dispose();
 });
 
 test('setModel forwards a per-request model override; unset uses the client default', async () => {

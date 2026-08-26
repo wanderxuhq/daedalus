@@ -104,6 +104,8 @@ export class DaedalusEngine {
   private sessionPool = new SessionPool();
   /** Tracks subagents currently running an agent loop, used to decide whether to restart after injecting a user message. */
   private runningSubagents = new Set<string>();
+  /** Per-agent AbortControllers so individual subagents can be aborted independently. */
+  private agentAbortControllers = new Map<string, AbortController>();
   /** Delegate configuration, reused when restarting subagent loops. */
   private delegateOptions: DelegateToolOptions | null = null;
   private usageStats = { inputTokens: 0, outputTokens: 0 };
@@ -115,6 +117,8 @@ export class DaedalusEngine {
   private shells: ShellRegistry;
   /** Durable project memory (DAEDALUS.md) read once at construction. */
   private memory: LoadedMemory = { sources: [], text: '' };
+  /** Active AbortController for the current run(); null when idle. */
+  private abortController: AbortController | null = null;
 
   constructor(opts: EngineOptions) {
     this.session = new Session();
@@ -328,6 +332,9 @@ export class DaedalusEngine {
     }
     this.runningSubagents.add(name);
     const opts = this.delegateOptions;
+    // Per-agent AbortController so this subagent can be aborted independently.
+    const agentAc = new AbortController();
+    this.agentAbortControllers.set(name, agentAc);
     // Emit delegate_start event so the frontend knows the subagent is running again.
     // This is important for restarting subagents after they complete.
     this.session.bus.emit({ type: 'delegate_start', agent: name, task: task ?? 'Handle user message' });
@@ -339,6 +346,11 @@ export class DaedalusEngine {
     });
     // Run the agent loop in the background. It will drain pending messages
     // at the start of each iteration.
+    const cleanup = () => {
+      unsub();
+      this.runningSubagents.delete(name);
+      this.agentAbortControllers.delete(name);
+    };
     runAgent({
       client: opts.client,
       session,
@@ -351,9 +363,9 @@ export class DaedalusEngine {
       locks: opts.locks,
       undo: opts.undo,
       agent: name,
+      signal: agentAc.signal,
     }).then(() => {
-      unsub();
-      this.runningSubagents.delete(name);
+      cleanup();
       // Defer the restart check so that a concurrent injectSubagentMessage
       // completes before we decide whether to restart. Without this, the
       // delete + hasPendingMessages window allows a race where two loops
@@ -367,8 +379,7 @@ export class DaedalusEngine {
       // to the main bus via the unsub subscriber above). We must NOT emit a second
       // 'done' here — it would create duplicate events in the UI.
     }).catch((err) => {
-      unsub();
-      this.runningSubagents.delete(name);
+      cleanup();
       queueMicrotask(() => {
         if (session.hasPendingMessages()) {
           this.startSubagentLoop(name);
@@ -447,39 +458,71 @@ export class DaedalusEngine {
 
   async run(prompt: string, opts: { signal?: AbortSignal } = {}): Promise<string> {
     const startedAt = Date.now();
+    // Create an internal AbortController so abort() from the server can cancel
+    // an in-flight run. When the caller also supplies a signal (e.g. Ctrl+C in
+    // the REPL), merge both so either path triggers cancellation.
+    const internal = new AbortController();
+    this.abortController = internal;
+    const signal = opts.signal
+      ? AbortSignal.any([internal.signal, opts.signal])
+      : internal.signal;
     // Plan mode removes write/edit from the MAIN agent's toolset for this run
     // (subagents drop them via the delegate tools' planMode flag). One-shot:
     // a completed run exits plan mode automatically.
     const tools = this.planMode ? this.tools.filter((t) => !PLAN_BLOCKED_TOOLS.has(t.name)) : this.tools;
-    const result = await runAgent({
-      client: this.client,
-      session: this.session,
-      prompt,
-      tools,
-      cwd: this.cwd,
-      askPermission: this.askPermission,
-      maxIterations: this.maxIterations,
-      maxContextTokens: this.maxContextTokens,
-      thinking: { enabled: this.thinking, ...(this.thinkingBudgetTokens !== undefined ? { budgetTokens: this.thinkingBudgetTokens } : {}) },
-      locks: this.locks,
-      undo: this.undo,
-      ...(this.model !== undefined ? { model: this.model } : {}),
-      ...(this.hooks ? { hooks: this.hooks } : {}),
-      agent: 'main',
-      ...(opts.signal ? { signal: opts.signal } : {}),
-    });
-    await this.persist();
-    // Plan mode is one-shot: a run that completed is either the plan itself or
-    // the follow-up after approval — either way the next turn starts normal.
-    if (this.planMode) this.planMode = false;
-    // Notification hook: a long turn finishing is the classic "come look" moment.
-    // Runs after persist so the session file is already current when it fires.
-    if (this.hooks?.notification && Date.now() - startedAt >= NOTIFICATION_AFTER_MS) {
-      try {
-        await runHook(this.hooks.notification, { elapsedMs: Date.now() - startedAt, result });
-      } catch { /* advisory */ }
+    try {
+      const result = await runAgent({
+        client: this.client,
+        session: this.session,
+        prompt,
+        tools,
+        cwd: this.cwd,
+        askPermission: this.askPermission,
+        maxIterations: this.maxIterations,
+        maxContextTokens: this.maxContextTokens,
+        thinking: { enabled: this.thinking, ...(this.thinkingBudgetTokens !== undefined ? { budgetTokens: this.thinkingBudgetTokens } : {}) },
+        locks: this.locks,
+        undo: this.undo,
+        ...(this.model !== undefined ? { model: this.model } : {}),
+        ...(this.hooks ? { hooks: this.hooks } : {}),
+        agent: 'main',
+        signal,
+      });
+      await this.persist();
+      // Plan mode is one-shot: a run that completed is either the plan itself or
+      // the follow-up after approval — either way the next turn starts normal.
+      if (this.planMode) this.planMode = false;
+      // Notification hook: a long turn finishing is the classic "come look" moment.
+      // Runs after persist so the session file is already current when it fires.
+      if (this.hooks?.notification && Date.now() - startedAt >= NOTIFICATION_AFTER_MS) {
+        try {
+          await runHook(this.hooks.notification, { elapsedMs: Date.now() - startedAt, result });
+        } catch { /* advisory */ }
+      }
+      return result;
+    } finally {
+      this.abortController = null;
     }
-    return result;
+  }
+
+  /** Abort the currently running agent loop (if any). No-op when idle. */
+  abort(): void {
+    this.abortController?.abort();
+  }
+
+  /** Abort a specific agent by name, or the main agent if name is omitted. */
+  abortAgent(name?: string): void {
+    if (!name) {
+      this.abortController?.abort();
+      return;
+    }
+    const ac = this.agentAbortControllers.get(name);
+    if (ac) ac.abort();
+  }
+
+  /** True when engine.run() is executing; false when idle. */
+  isRunning(): boolean {
+    return this.abortController !== null;
   }
 
   /** Whether write/edit are currently removed (plan mode). */
@@ -636,6 +679,8 @@ export class DaedalusEngine {
     }
     this.session.dispose();
     this.sessionPool.clear();
+    for (const ac of this.agentAbortControllers.values()) ac.abort();
+    this.agentAbortControllers.clear();
     this.shells.clear();
     this.locks.clear();
     this.undo.clear();

@@ -15,6 +15,11 @@ html, body { margin: 0; height: 100%; background: #111; color: #e5e5e5; font-fam
 .chat-input { display: flex; gap: 8px; padding: 10px 12px; border-top: 1px solid #333; align-items: flex-end; background: #161616; }
 .chat-input textarea { flex: 1; resize: none; background: #222; color: #eee; border: 1px solid #444; border-radius: 8px; padding: 8px 10px; min-height: 40px; }
 .send-btn { width: 40px; height: 40px; border-radius: 8px; border: none; background: #2a7de1; color: #fff; font-size: 18px; }
+.abort-btn { background: #e5484d !important; cursor: pointer; }
+.abort-btn:hover { background: #d33a40 !important; }
+.delegate-row-content { position: relative; }
+.delegate-row-content .abort-btn { position: absolute; right: 4px; top: 50%; transform: translateY(-50%); width: 24px; height: 24px; border-radius: 4px; border: none; background: #e5484d; color: #fff; font-size: 12px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.delegate-row-content .abort-btn:hover { background: #d33a40; }
 .auto-toggle { height: 40px; padding: 0 10px; border-radius: 8px; border: 1px solid #444; background: #222; color: #ccc; }
 .auto-toggle.auto-on { border-color: #2a7de1; color: #2a7de1; }
 

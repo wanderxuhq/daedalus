@@ -26,6 +26,7 @@ const en: Record<string, string> = {
   'input.running': 'Running…',
   'input.placeholder': 'Enter message',
   'input.togglePermission': 'Toggle permission mode',
+  'input.stop': 'Stop',
 
   // Permission card
   'permission.allow': 'Allow',
@@ -69,6 +70,7 @@ const zhCN: Record<string, string> = {
   'input.running': '运行中…',
   'input.placeholder': '输入消息',
   'input.togglePermission': '权限模式切换',
+  'input.stop': '停止',
 
   // Permission card
   'permission.allow': '允许',

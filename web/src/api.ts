@@ -60,4 +60,9 @@ export async function chatAgent(name: string, prompt: string): Promise<ChatResul
   }
 }
 
+/** 中断指定代理或主对话。 */
+export async function abortAgent(name?: string): Promise<void> {
+  await request('POST', '/api/agents/abort', name ? { name } : {});
+}
+
 

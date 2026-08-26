@@ -32,5 +32,12 @@ export function registerAgentRoutes(http: HttpServer, engine: DaedalusEngine, hu
     return { status: 'ok' };
   });
 
+  /** POST /api/agents/abort — abort a specific agent or the main agent. */
+  http.post('/api/agents/abort', async (_req, body) => {
+    const name = (body as { name?: unknown } | null)?.name;
+    engine.abortAgent(typeof name === 'string' ? name : undefined);
+    return { status: 'ok' };
+  });
+
 undefined
 }

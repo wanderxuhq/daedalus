@@ -4,7 +4,7 @@ import { t } from '../../i18n.ts';
 
 interface SessionRow { id: string; title: string; updatedAt: string; messageCount: number }
 
-export function ChatInput(props: { disabled: boolean; autoApprove: boolean; onSend: (prompt: string) => void; onToggleAuto: () => void; onResumeSession?: (id: string) => void }) {
+export function ChatInput(props: { disabled: boolean; autoApprove: boolean; onSend: (prompt: string) => void; onToggleAuto: () => void; onAbort?: () => void; onResumeSession?: (id: string) => void }) {
   const [text, setText] = createSignal('');
   const [showSessions, setShowSessions] = createSignal(false);
   const [sessions, setSessions] = createSignal<SessionRow[]>([]);
@@ -83,7 +83,12 @@ export function ChatInput(props: { disabled: boolean; autoApprove: boolean; onSe
             if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
           }}
         />
-        <button class="send-btn" onClick={submit} disabled={props.disabled}>⏎</button>
+        <Show
+          when={props.disabled && props.onAbort}
+          fallback={<button class="send-btn" onClick={submit} disabled={props.disabled}>⏎</button>}
+        >
+          <button class="abort-btn send-btn" onClick={() => props.onAbort!()} title={t('input.stop')}>⏹</button>
+        </Show>
         <button class="auto-toggle" classList={{ 'auto-on': props.autoApprove }} onClick={props.onToggleAuto} title={t('input.togglePermission')}>
           {props.autoApprove ? 'auto' : 'ask'}
         </button>
