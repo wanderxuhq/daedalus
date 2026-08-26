@@ -111,8 +111,10 @@ export function ToolCard(props: { tool: ToolInfo; status: 'running' | 'done' | '
   const preview = () => formatPreview(props.tool.name, props.tool.input, props.cwd);
   return (
     <div class={`tool-card ${props.status}`} onClick={() => setOpen(!open())}>
-      <span class="tool-title">{props.status === 'running' ? '⏳' : props.status === 'error' ? '✗' : '✓'} {props.tool.name}</span>
-      <span class="tool-input-preview">{preview()}</span>
+      <div class="tool-card-header">
+        <span class="tool-title">{props.status === 'running' ? '⏳' : props.status === 'error' ? '✗' : '✓'} {props.tool.name}</span>
+        <span class="tool-input-preview">{preview()}</span>
+      </div>
       <Show when={open()}>
         <div class="tool-body">
           <Show when={props.tool.diff}>
