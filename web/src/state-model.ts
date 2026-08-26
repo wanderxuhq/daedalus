@@ -185,26 +185,8 @@ export function applyEnvelope(state: UiState, env: EventEnvelope): UiState {
       error = ev.error.message;
       streamingMessage = null; // 错误后清空流式消息
     } else {
-      // tool_result 事件到达时如果 streamingMessage 已清空（turn_done 先到），
-      // 直接更新 state.messages 中最后一个 assistant 消息的 tool_call 块
-      if (ev.type === 'tool_result' && !streamingMessage && state.messages.length > 0) {
-        const lastMsg = state.messages[state.messages.length - 1];
-        if (lastMsg.role === 'assistant') {
-          const hasMatching = lastMsg.content.some((c: { type: string; id?: string }) => c.type === 'tool_call' && c.id === ev.id);
-          if (hasMatching) {
-            const updatedContent = lastMsg.content.map((c: { type: string; id?: string; [k: string]: unknown }) => {
-              if (c.type === 'tool_call' && c.id === ev.id) {
-                return { ...c, resultContent: ev.content, diff: ev.diff, status: ev.isError ? 'error' : 'done' };
-              }
-              return c;
-            });
-            messages = [...state.messages.slice(0, -1), { ...lastMsg, content: updatedContent } as Message];
-          }
-        }
-      } else {
-        // 更新流式消息
-        streamingMessage = updateStreamingMessage(state, ev);
-      }
+      // 更新流式消息
+      streamingMessage = updateStreamingMessage(state, ev);
     }
     return { ...state, log, running, messages, error, streamingMessage, pendingPermission: TERMINALS.has(ev.type) ? null : state.pendingPermission };
   }

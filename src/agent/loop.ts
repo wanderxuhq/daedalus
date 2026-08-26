@@ -174,11 +174,13 @@ export async function runAgent(params: RunAgentParams): Promise<string> {
         // causing a race condition where reconnecting clients missed the message).
         if (hasPersistableContent(pendingDone.message)) session.addMessage(pendingDone.message);
         const calls = pendingDone.message.content.filter((c) => c.type === 'tool_call');
-        if (calls.length > 0) {
-          session.bus.emit({ type: 'turn_done', message: pendingDone.message });
-        } else {
+        if (calls.length === 0) {
+          // No tool calls → this is the final turn; emit done immediately.
           session.bus.emit(toCoreEvent(pendingDone));
+          pendingDone = undefined; // clear so turn_done is not emitted later
         }
+        // If there are tool calls, turn_done is emitted AFTER tool execution
+        // completes (below), so that all tool_result events arrive before turn_done.
       }
       // Equivalent of events.findLast(...): scan backwards for the terminal 'done'.
       // findLast is an ES2023 method and this project's tsconfig targets ES2022.
@@ -281,6 +283,13 @@ export async function runAgent(params: RunAgentParams): Promise<string> {
         };
       });
       session.addMessage({ role: 'user', content: resultBlocks });
+      // Emit turn_done AFTER all tool_result events, so the frontend sees
+      // results before the turn boundary. pendingDone is set only when the
+      // assistant message contained tool calls (the non-zero-calls branch
+      // above skipped the immediate emit).
+      if (pendingDone?.type === 'done') {
+        session.bus.emit({ type: 'turn_done', message: pendingDone.message });
+      }
     }
     return finalText;
   } catch (err) {
