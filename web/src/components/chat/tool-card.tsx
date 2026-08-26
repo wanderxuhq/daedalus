@@ -14,15 +14,22 @@ export function DiffBlock(props: { diff: string }) {
 export function CodeBlock(props: { text: string }) {
   const lines = () => props.text.split('\n');
   return (
-    <pre class="code-block">
-      {lines().map((line) => {
-        const tabIdx = line.indexOf('\t');
-        if (tabIdx === -1) return <div><span class="code-line-num">{' '}</span><span>{line || ' '}</span></div>;
-        const num = line.slice(0, tabIdx);
-        const rest = line.slice(tabIdx + 1);
-        return <div><span class="code-line-num">{num}</span><span>{rest || ' '}</span></div>;
-      })}
-    </pre>
+    <div class="code-block-wrap">
+      <div class="code-gutter">
+        {lines().map((line) => {
+          const tabIdx = line.indexOf('\t');
+          const num = tabIdx === -1 ? ' ' : line.slice(0, tabIdx);
+          return <div class="code-line-num">{num}</div>;
+        })}
+      </div>
+      <pre class="code-content">
+        {lines().map((line) => {
+          const tabIdx = line.indexOf('\t');
+          const rest = tabIdx === -1 ? line : line.slice(tabIdx + 1);
+          return <div>{rest || ' '}</div>;
+        })}
+      </pre>
+    </div>
   );
 }
 
