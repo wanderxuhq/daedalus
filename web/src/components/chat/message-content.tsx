@@ -11,7 +11,7 @@ type RenderableContent =
   | { type: 'text_delta'; text: string }
   | { type: 'thinking_delta'; thinking: string }
   | { type: 'tool_call_start'; id: string; name: string }
-  | { type: 'tool_result'; id: string; name: string; input: unknown; content: string; isError?: boolean }
+  | { type: 'tool_result'; id: string; name: string; input: unknown; content: string; isError?: boolean; diff?: string }
   | { type: 'delegate_start'; agent?: string; task: string };
 
 export function MessageContent(props: {
@@ -35,7 +35,7 @@ export function MessageContent(props: {
           {c.type === 'text_delta' && render(c.text)}
           {c.type === 'thinking_delta' && <Thinking text={c.thinking} />}
           {c.type === 'tool_call_start' && <ToolCard tool={{ id: c.id, name: c.name, input: {}, status: 'running' }} status="running" cwd={props.cwd} />}
-          {c.type === 'tool_result' && 'id' in c && <ToolCard tool={{ id: c.id, name: c.name, input: c.input, content: c.content, status: 'done' }} status="done" cwd={props.cwd} />}
+          {c.type === 'tool_result' && 'id' in c && <ToolCard tool={{ id: c.id, name: c.name, input: c.input, content: c.content, diff: c.diff, status: 'done' }} status="done" cwd={props.cwd} />}
           {c.type === 'delegate_start' && <div class="event-line">→ subagent [{c.agent}] {c.task}</div>}
         </>
       )}
