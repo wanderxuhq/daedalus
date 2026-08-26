@@ -106,10 +106,10 @@ export function App() {
         <div class="main">
           <div class="chat-stream" ref={chatStreamRef}>
             <For each={state().messages}>
-              {(m) => <MessageBubble message={m} />}
+              {(m) => <MessageBubble message={m} cwd={state().cwd} />}
             </For>
             <Show when={state().streamingMessage}>
-              {(sm) => <MessageBubble message={sm()} />}
+              {(sm) => <MessageBubble message={sm()} cwd={state().cwd} />}
             </Show>
             <Show when={state().pendingPermission}>
               <PermissionCard pending={state().pendingPermission} send={(m) => sendWsMessage(m)} />

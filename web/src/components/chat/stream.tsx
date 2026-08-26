@@ -18,5 +18,7 @@ export function StreamText(props: { text: string }) {
     ],
     ALLOWED_ATTR: ['href', 'src', 'alt', 'title', 'class'],
   });
-  return <div class="msg-text markdown-body" innerHTML={safeHtml} />;
+  // Wrap tables in a scrollable div
+  const wrappedHtml = safeHtml.replace(/<table/g, '<div class="table-wrap"><table').replace(/<\/table>/g, '</table></div>');
+  return <div class="msg-text markdown-body" innerHTML={wrappedHtml} />;
 }

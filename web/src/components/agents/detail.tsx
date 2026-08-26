@@ -36,7 +36,7 @@ export function AgentDetail(props: { name: string }) {
               {/* 子代理会话同样以 role:'system' 存自己的提示词 —— 不渲染。 */}
               <For each={history().filter(m => m.role !== 'system')}>
                 {(m: Message) => (
-                  <MessageContent content={m.content} />
+                  <MessageContent content={m.content} cwd={state().cwd} />
                 )}
               </For>
               {/* 实时 tagged 事件：state-model 已按 agent 累积到 a().events */}
@@ -47,7 +47,7 @@ export function AgentDetail(props: { name: string }) {
                 e.type === 'tool_call_start' || 
                 e.type === 'tool_result' || 
                 e.type === 'delegate_start'
-              )} />
+              )} cwd={state().cwd} />
             </div>
           </>
         )}

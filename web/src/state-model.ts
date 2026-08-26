@@ -25,10 +25,12 @@ export interface UiState {
   subagentMessages: (Message | CoreEvent)[];
   /** 当前正在流式输出的助手消息（实时渲染用）。 */
   streamingMessage: StreamingMessage | null;
+  /** 工作目录，用于在 UI 中格式化路径。 */
+  cwd: string;
 }
 
 export function initialUiState(): UiState {
-  return { messages: [], subagents: [], running: false, log: [], pendingPermission: null, autoApprove: false, error: null, viewingSubagent: null, subagentMessages: [], streamingMessage: null };
+  return { messages: [], subagents: [], running: false, log: [], pendingPermission: null, autoApprove: false, error: null, viewingSubagent: null, subagentMessages: [], streamingMessage: null, cwd: '' };
 }
 
 /** 用户点发送：本地立即回显 user 消息（不等服务端），清掉上一次的错误和流式消息。 */
@@ -214,6 +216,7 @@ export function mergeSnapshot(state: UiState, snap: SnapshotPayload): UiState {
     log: [...snap.log],
     pendingPermission: snap.pendingPermission,
     error: snap.error ?? null,
+    cwd: snap.cwd ?? '',
     streamingMessage: null, // 快照重置时清空流式消息
     // viewingSubagent 和 subagentMessages 保持不变——快照重置不应打断用户的子代理浏览。
   };

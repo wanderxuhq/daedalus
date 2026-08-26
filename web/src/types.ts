@@ -16,4 +16,5 @@ export interface SnapshotPayload {
   log: CoreEvent[];
   pendingPermission: { id: string; action: string; target: string } | null;
   error: string | null;
+  cwd: string;
 }

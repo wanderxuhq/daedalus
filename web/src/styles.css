@@ -19,20 +19,33 @@ html, body { margin: 0; height: 100%; background: #111; color: #e5e5e5; font-fam
 .auto-toggle.auto-on { border-color: #2a7de1; color: #2a7de1; }
 
 /* messages / thinking / tool cards / permission / badges / delegate rows */
-.msg { padding: 8px 10px; border-radius: 10px; max-width: 85%; }
+.msg { padding: 8px 10px; border-radius: 10px; max-width: 85%; min-width: 0; }
 .msg-user { align-self: flex-end; background: #1d4a8f; color: #fff; white-space: pre-wrap; }
 .msg-assistant { align-self: flex-start; background: #1d1d1d; }
-.msg-text { white-space: pre-wrap; word-break: break-word; }
+.msg-text { word-break: break-word; overflow-wrap: anywhere; }
+/* Code blocks */
+.markdown-body pre { overflow-x: auto; max-width: 100%; background: #111; padding: 8px; border-radius: 6px; font-size: 12px; }
+.markdown-body code { white-space: pre; }
+/* Table – wrapper div handles scroll, table stays full-width inside */
+.table-wrap { overflow-x: auto; max-width: 100%; margin: 8px 0; }
+.markdown-body table { width: 100%; border-collapse: collapse; }
+.markdown-body td, .markdown-body th { white-space: nowrap; padding: 4px 8px; border: 1px solid #333; text-align: left; }
+/* Lists */
+.markdown-body ul, .markdown-body ol { overflow-x: auto; max-width: 100%; }
+.markdown-body li { word-break: break-word; }
+/* Blockquote */
+.markdown-body blockquote { border-left: 3px solid #555; padding-left: 10px; color: #aaa; overflow-x: auto; max-width: 100%; }
+/* Headings & paragraphs – no overflow needed, they wrap naturally */
 .thinking { background: #1a1a1a; color: #999; border-left: 2px solid #555; padding: 4px 8px; cursor: pointer; border-radius: 4px; }
 .thinking-toggle { font-size: 12px; color: #888; }
 .thinking-body { margin-top: 6px; white-space: pre-wrap; color: #aaa; }
-.tool-card { border: 1px solid #444; border-left: 3px solid #2a7de1; border-radius: 6px; padding: 6px 10px; cursor: pointer; background: #181818; }
+.tool-card { border: 1px solid #444; border-left: 3px solid #2a7de1; border-radius: 6px; padding: 6px 10px; cursor: pointer; background: #181818; min-width: 0; }
 .tool-card.error { border-left-color: #e5484d; }
 .tool-card.done { border-left-color: #46a758; }
 .tool-title { font-weight: 600; margin-right: 8px; }
 .tool-input-preview { color: #888; font-size: 12px; }
-.tool-body { margin-top: 8px; }
-.tool-content { white-space: pre-wrap; background: #111; padding: 8px; border-radius: 6px; max-height: 320px; overflow: auto; font-size: 12px; }
+.tool-body { margin-top: 8px; min-width: 0; }
+.tool-content { white-space: pre-wrap; background: #111; padding: 8px; border-radius: 6px; max-height: 320px; max-width: 100%; overflow-x: auto; overflow-y: auto; font-size: 12px; }
 .diff { background: #111; padding: 8px; border-radius: 6px; font-size: 12px; overflow-x: auto; }
 .diff-add { color: #46a758; }
 .diff-del { color: #e5484d; }
@@ -41,10 +54,11 @@ html, body { margin: 0; height: 100%; background: #111; color: #e5e5e5; font-fam
 .permission-target { white-space: pre-wrap; background: #111; padding: 6px; border-radius: 4px; margin: 8px 0; font-size: 12px; }
 .permission-btns button { margin-right: 8px; padding: 6px 12px; border-radius: 6px; border: none; cursor: pointer; }
 .permission-btns button:first-child { background: #46a758; color: #fff; }
-.delegate-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; text-decoration: none; color: inherit; }
+.delegate-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 6px; text-decoration: none; color: inherit; min-width: 0; overflow: hidden; }
 .delegate-row:hover { background: #1d1d1d; }
-.delegate-name { font-weight: 600; }
-.delegate-task { color: #888; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.delegate-row-content { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
+.delegate-name { font-weight: 600; flex-shrink: 0; }
+.delegate-task { color: #888; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1; }
 .event-line { color: #666; font-size: 12px; padding: 2px 8px; }
 
 /* badge / drawer / sessions / agent detail / reconnect banner */

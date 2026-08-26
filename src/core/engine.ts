@@ -566,6 +566,9 @@ export class DaedalusEngine {
     return { tokens: estimateTokens(this.session.getMessages()), maxTokens: this.maxContextTokens };
   }
 
+  /** Working directory for path display in the UI. */
+  getCwd(): string { return this.cwd; }
+
   /** Starter DAEDALUS.md template for `/init` — the project memory file. */
   private static readonly MEMORY_TEMPLATE = [
     '# DAEDALUS.md',

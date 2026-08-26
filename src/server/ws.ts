@@ -13,11 +13,12 @@ export interface SnapshotPayload {
   log: CoreEvent[];
   pendingPermission: { id: string; action: string; target: string } | null;
   error: string | null;
+  cwd: string;
 }
 
 /** WebSocket hub: sends snapshot on connect; broadcasts all CoreEvents; forwards permission requests/responses. */
 export class WebSocketHub {
-  private engine: Pick<DaedalusEngine, 'getSessionState' | 'listSubagents' | 'getSubagentMessages'>;
+  private engine: Pick<DaedalusEngine, 'getSessionState' | 'listSubagents' | 'getSubagentMessages' | 'getCwd'>;
   private hub: EventHub;
   private permission: WebPermissionManager;
   private log: CoreEvent[] = [];
@@ -30,7 +31,7 @@ export class WebSocketHub {
   private pingTimeout: number;
 
   constructor(opts: {
-    engine: Pick<DaedalusEngine, 'getSessionState' | 'listSubagents' | 'getSubagentMessages'>;
+    engine: Pick<DaedalusEngine, 'getSessionState' | 'listSubagents' | 'getSubagentMessages' | 'getCwd'>;
     hub: EventHub;
     permission: WebPermissionManager;
     pingInterval?: number;
@@ -93,12 +94,10 @@ export class WebSocketHub {
       messages,
       subagents: this.hub.list(),
       running,
-      // Filter out stale turn_done events: after a reconnect, the snapshot's messages
-      // already contain the committed assistant messages. Replaying turn_done from the
-      // log would cause duplicates (even with ID dedup, it's cleaner to omit them).
       log: this.log.filter((ev) => ev.type !== 'turn_done'),
       pendingPermission: this.permission.pending(),
       error: this.lastError,
+      cwd: this.engine.getCwd(),
     };
   }
 
