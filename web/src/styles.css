@@ -51,7 +51,7 @@ html, body { margin: 0; height: 100%; background: #111; color: #e5e5e5; font-fam
 .diff-del { color: #e5484d; }
 .code-block { background: #111; padding: 8px; border-radius: 6px; font-size: 12px; overflow-x: auto; white-space: pre; }
 .code-block div { white-space: pre; }
-.code-line-num { color: #555; user-select: none; display: inline-block; min-width: 3ch; text-align: right; margin-right: 1em; position: sticky; left: 0; background: #111; z-index: 1; }
+.code-line-num { color: #555; user-select: none; display: inline-block; min-width: 3ch; text-align: right; margin-right: 1em; position: sticky; left: 0; background: #111; z-index: 1; padding-left: 8px; }
 .permission-card { border: 1px solid #e5a50a; border-left: 3px solid #e5a50a; border-radius: 6px; padding: 10px; background: #201a08; }
 .permission-title { font-weight: 600; color: #f0d77a; }
 .permission-target { white-space: pre-wrap; background: #111; padding: 6px; border-radius: 4px; margin: 8px 0; font-size: 12px; }
