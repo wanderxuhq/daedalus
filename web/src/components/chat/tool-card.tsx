@@ -11,6 +11,21 @@ export function DiffBlock(props: { diff: string }) {
   );
 }
 
+export function CodeBlock(props: { text: string }) {
+  const lines = () => props.text.split('\n');
+  return (
+    <pre class="code-block">
+      {lines().map((line) => {
+        const tabIdx = line.indexOf('\t');
+        if (tabIdx === -1) return <div><span class="code-line-num">{' '}</span><span>{line || ' '}</span></div>;
+        const num = line.slice(0, tabIdx);
+        const rest = line.slice(tabIdx + 1);
+        return <div><span class="code-line-num">{num}</span><span>{rest || ' '}</span></div>;
+      })}
+    </pre>
+  );
+}
+
 /** Format a path: relative to cwd if under cwd, absolute otherwise. */
 function fmtPath(p: string, cwd?: string): string {
   if (!cwd || !p) return p;
@@ -97,7 +112,9 @@ export function ToolCard(props: { tool: ToolInfo; status: 'running' | 'done' | '
             <DiffBlock diff={props.tool.diff!} />
           </Show>
           <Show when={!props.tool.diff && props.tool.content}>
-            <pre class="tool-content">{props.tool.content}</pre>
+            {props.tool.name === 'read'
+              ? <CodeBlock text={props.tool.content!} />
+              : <pre class="tool-content">{props.tool.content}</pre>}
           </Show>
         </div>
       </Show>

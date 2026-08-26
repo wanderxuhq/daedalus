@@ -83,7 +83,9 @@ export const readTool: Tool = {
       const end = limit !== undefined ? start + limit : Number.POSITIVE_INFINITY;
       const sliced = await readLines(full, start, end);
       const isPartial = offset !== undefined || limit !== undefined;
-      const content = isPartial ? sliced.map((l, i) => `${start + i + 1}\t${l}`).join('\n') : sliced.join('\n');
+      const startLine = offset ?? 0;
+      // Always prefix lines with line numbers for the web UI code view.
+      const content = sliced.map((l, i) => `${startLine + i + 1}\t${l}`).join('\n');
       // Guard against one enormous line / 2k-line reads blowing the window: same
       // truncate-and-spill policy as bash.
       const { content: capped } = await truncateResult(content);
