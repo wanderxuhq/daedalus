@@ -78,10 +78,19 @@ export class WebSocketHub {
 
   private snapshot(): SnapshotPayload {
     const running = !TERMINALS.has(this.log[this.log.length - 1]?.type ?? 'done');
+    // System prompts live in session messages (role:'system'), but snapshots are UI data — sending them would
+    // cause the browser to render model instructions as chat bubbles. Filter them out here at the source.
+    // Filter first, then deep-clone only the messages that will actually be sent.
+    const state = this.engine.getSessionState();
+    const messages = state.messages
+      .filter((m) => m.role !== 'system')
+      .map((m) => ({
+        role: m.role,
+        content: m.content.map((b) => structuredClone(b)),
+        ...(m._id !== undefined ? { _id: m._id } : {}),
+      }));
     return {
-      // System prompts live in session messages (role:'system'), but snapshots are UI data — sending them would
-      // cause the browser to render model instructions as chat bubbles. Filter them out here at the source.
-      messages: this.engine.getSessionState().messages.filter((m) => m.role !== 'system'),
+      messages,
       subagents: this.hub.list(),
       running,
       // Filter out stale turn_done events: after a reconnect, the snapshot's messages
@@ -93,8 +102,8 @@ export class WebSocketHub {
     };
   }
 
-  private sendEvent(ws: import('ws').WebSocket, ev: CoreEvent): void {
-    if (ws.readyState === ws.OPEN) ws.send(JSON.stringify({ type: 'event', ev }));
+  private sendEvent(ws: import('ws').WebSocket, raw: string): void {
+    if (ws.readyState === ws.OPEN) ws.send(raw);
   }
 
   /** Broadcast any message to all clients (permission requests and other non-CoreEvent messages). */
@@ -108,7 +117,8 @@ export class WebSocketHub {
     // Subagent events don't enter the main session log or affect running state.
     // Only broadcast to clients — the EventHub tracks subagent state separately.
     if (ev.agent !== undefined) {
-      for (const c of this.clients) this.sendEvent(c, ev);
+      const raw = JSON.stringify({ type: 'event', ev });
+      for (const c of this.clients) this.sendEvent(c, raw);
       return;
     }
     if (TERMINALS.has(ev.type)) {
@@ -128,7 +138,8 @@ export class WebSocketHub {
       // turn_done is a non-terminal event: message lands in UI, but engine keeps running
       this.log.push(ev);
     }
-    for (const c of this.clients) this.sendEvent(c, ev);
+    const raw = JSON.stringify({ type: 'event', ev });
+    for (const c of this.clients) this.sendEvent(c, raw);
   }
 
   /**

@@ -168,16 +168,20 @@ export class PersistentShell {
     const sentinel = `__DAEDALUS_SENTINEL__${nonce}`;
     const script = `__DAEDALUS_START__${nonce}\n${command}\n__DAEDALUS_END__${nonce}\n`;
 
-    let stdout = '';
-    let stderr = '';
+    let stdoutBuffers: Buffer[] = [];
+    let stderrBuffers: Buffer[] = [];
+    let stdoutLen = 0;
+    let stderrLen = 0;
     let settled = false;
 
     return new Promise<ShellResult>((resolve, reject) => {
       const resolveFromBuffer = () => {
-        const idx = stdout.indexOf(sentinel);
+        // Search for sentinel across all buffered data
+        const fullStdout = Buffer.concat(stdoutBuffers).toString();
+        const idx = fullStdout.indexOf(sentinel);
         if (idx === -1) return false;
-        const lineEnd = stdout.indexOf('\n', idx);
-        const line = stdout.slice(idx, lineEnd === -1 ? undefined : lineEnd).trim();
+        const lineEnd = fullStdout.indexOf('\n', idx);
+        const line = fullStdout.slice(idx, lineEnd === -1 ? undefined : lineEnd).trim();
         const m = line.match(/rc=(-?\d+) pwd=(.*)$/);
         if (!m) {
           finish(() => reject(new Error('bash: failed to parse the command sentinel')));
@@ -186,9 +190,10 @@ export class PersistentShell {
         const code = Number(m[1]);
         const pwd = m[2];
         // Everything before the sentinel line is the command's stdout.
-        const out = stdout.slice(0, idx).replace(/\s+$/, '');
+        const out = fullStdout.slice(0, idx).replace(/\s+$/, '');
+        const fullStderr = Buffer.concat(stderrBuffers).toString();
         this.cwd = pwd;
-        finish(() => resolve({ code, output: [out, stderr].filter(Boolean).join('\n'), cwd: pwd }));
+        finish(() => resolve({ code, output: [out, fullStderr].filter(Boolean).join('\n'), cwd: pwd }));
         return true;
       };
       const cleanup = () => {
@@ -224,10 +229,14 @@ export class PersistentShell {
       };
       const onPipeError = (e: Error) => handleWriteFailure(e);
       const onData = (d: Buffer) => {
-        stdout += d.toString();
+        stdoutBuffers.push(d);
+        stdoutLen += d.length;
         resolveFromBuffer();
       };
-      const onErr = (d: Buffer) => { stderr += d.toString(); };
+      const onErr = (d: Buffer) => {
+        stderrBuffers.push(d);
+        stderrLen += d.length;
+      };
       const onExit = (code: number | null) => {
         // The shell died mid-command. Normally the sentinel arrived first; if
         // 'close' wins the race (a `exit N` command), parse the buffer as a

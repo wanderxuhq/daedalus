@@ -645,7 +645,8 @@ export class DaedalusEngine {
     if (this.sessionStore) {
       // Reuse the stable session id (resumed or first-generated) so a session is one
       // file, not one snapshot per save (design §3.3). save() returns the id used.
-      this.sessionId = await this.sessionStore.save(this.getSessionState(), { id: this.sessionId, cwd: this.cwd });
+      // Use clone=false: save() only serializes to JSON, no mutation risk.
+      this.sessionId = await this.sessionStore.save(this.session.getState(false), { id: this.sessionId, cwd: this.cwd });
     }
   }
 }

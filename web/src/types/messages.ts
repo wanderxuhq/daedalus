@@ -28,28 +28,6 @@ export interface ToolInfo {
   status: 'running' | 'done' | 'error';
 }
 
-/** Message with tools attached */
-export interface MessageWithTools extends Message {
-  tools?: ToolInfo[];
-}
-
-/** Content block with type guard */
-export function isTextBlock(block: ContentBlock): block is { type: 'text'; text: string } {
-  return block.type === 'text';
-}
-
-export function isThinkingBlock(block: ContentBlock): block is { type: 'thinking'; thinking: string; signature?: string } {
-  return block.type === 'thinking';
-}
-
-export function isToolCallBlock(block: ContentBlock): block is { type: 'tool_call'; id: string; name: string; input: unknown } {
-  return block.type === 'tool_call';
-}
-
-export function isToolResultBlock(block: ContentBlock): block is { type: 'tool_result'; toolCallId: string; content: string; isError?: boolean } {
-  return block.type === 'tool_result';
-}
-
 /** Streaming message type for real-time updates */
 export interface StreamingMessage {
   role: 'assistant';

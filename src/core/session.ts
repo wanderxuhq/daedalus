@@ -67,8 +67,19 @@ export class Session {
     return [...this.skills];
   }
 
-  /** Deep copy of messages + skills so callers cannot mutate internal state. */
-  getState(): SessionState {
+  /**
+   * State snapshot.
+   * @param clone - When false, returns references to internal arrays (caller must NOT mutate).
+   *                When true (default), deep-clones messages for safety.
+   *                Use false in hot paths like persist() where the consumer only serializes.
+   */
+  getState(clone = true): SessionState {
+    if (!clone) {
+      return {
+        messages: this.msgs,
+        loadedSkills: [...this.skills],
+      };
+    }
     return {
       messages: this.msgs.map((m) => ({
         role: m.role,

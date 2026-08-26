@@ -54,16 +54,13 @@ function hasPersistableContent(m: Message): boolean {
   );
 }
 
+/**
+ * Convert a StreamEvent to a CoreEvent.
+ * StreamEvent and CoreEvent share the same variant names and field shapes,
+ * so this is a safe type assertion — avoids redundant field-by-field mapping.
+ */
 function toCoreEvent(ev: StreamEvent): CoreEvent {
-  switch (ev.type) {
-    case 'text_delta': return { type: 'text_delta', text: ev.text };
-    case 'thinking_delta': return { type: 'thinking_delta', thinking: ev.thinking };
-    case 'tool_call_start': return { type: 'tool_call_start', id: ev.id, name: ev.name };
-    case 'tool_call_delta': return { type: 'tool_call_delta', id: ev.id, inputDelta: ev.inputDelta };
-    case 'usage': return { type: 'usage', inputTokens: ev.inputTokens, outputTokens: ev.outputTokens };
-    case 'done': return { type: 'done', message: ev.message };
-    case 'error': return { type: 'error', error: ev.error };
-  }
+  return ev as CoreEvent;
 }
 
 export async function runAgent(params: RunAgentParams): Promise<string> {

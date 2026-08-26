@@ -39,7 +39,13 @@ export const editTool: Tool = {
         }
         throw e;
       }
-      const count = text.split(oldString).length - 1;
+      // Count occurrences using indexOf loop (more efficient than split for large strings)
+      let count = 0;
+      let pos = 0;
+      while ((pos = text.indexOf(oldString, pos)) !== -1) {
+        count++;
+        pos += oldString.length;
+      }
       if (count === 0) return { content: `oldString not found in ${full}`, isError: true };
       if (count > 1) return { content: `oldString matches ${count} times; not unique`, isError: true };
       const updated = text.replace(oldString, newString);

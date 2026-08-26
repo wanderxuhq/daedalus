@@ -6,8 +6,7 @@ import type { CoreEvent } from './events.ts';
 import type { FileLockRegistry } from './file-lock.ts';
 import type { FileUndoRegistry } from './undo.ts';
 import { PLAN_BLOCKED_TOOLS } from '../tools/registry.ts';
-
-export const CONSULT_TOOL_NAME = 'consult';
+import { CONSULT_TOOL_NAME } from './system-prompt.ts';
 /** Consult is a question-answer task, not a work loop: cap iterations by default. */
 const DEFAULT_CONSULT_MAX_ITERATIONS = 10;
 
@@ -112,7 +111,18 @@ function mergeAdjacentRoles(msgs: Message[]): Message[] {
  * hot subagent's prompt cache covers the whole prefix.
  */
 export function prepareConsultHistory(messages: Message[], question: string, opts: { digest?: boolean } = {}): Message[] {
-  let msgs: Message[] = structuredClone(messages);
+  // Apply digest filter first (before clone) to minimize the data we need to deep-copy.
+  let msgs: Message[] = opts.digest
+    ? messages
+        .map((m) => ({
+          role: m.role,
+          content: m.content.filter((b): b is Extract<ContentBlock, { type: 'text' | 'thinking' }> =>
+            b.type === 'text' || b.type === 'thinking'),
+        }))
+        .filter((m) => m.content.length > 0)
+    : messages;
+  // Deep-clone the (now possibly smaller) set of messages.
+  msgs = structuredClone(msgs);
   // Trim an unclosed tool-call tail: assistant(tool_call) with no result, plus
   // any orphaned user(tool_result) following it. Loop because a trim can
   // expose another open call.
@@ -138,13 +148,6 @@ export function prepareConsultHistory(messages: Message[], question: string, opt
     }
   }
   if (opts.digest) {
-    msgs = msgs
-      .map((m) => ({
-        role: m.role,
-        content: m.content.filter((b): b is Extract<ContentBlock, { type: 'text' | 'thinking' }> =>
-          b.type === 'text' || b.type === 'thinking'),
-      }))
-      .filter((m) => m.content.length > 0);
     // Dropping tool blocks can leave consecutive same-role messages; merge them
     // so the history stays valid for alternating-role providers.
     msgs = mergeAdjacentRoles(msgs);

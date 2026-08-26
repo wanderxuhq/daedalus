@@ -1,6 +1,6 @@
 import { For } from 'solid-js';
 import { MessageContent } from './message-content.tsx';
-import type { Message, isTextBlock } from '../../types/messages.ts';
+import type { Message } from '../../types/messages.ts';
 
 export function MessageBubble(props: { message: Message }) {
   const m = () => props.message;
