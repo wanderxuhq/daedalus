@@ -2,7 +2,7 @@ export type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'thinking'; thinking: string; signature?: string }
   | { type: 'tool_call'; id: string; name: string; input: unknown }
-  | { type: 'tool_result'; toolCallId: string; content: string; isError?: boolean };
+  | { type: 'tool_result'; toolCallId: string; content: string; isError?: boolean; diff?: string };
 
 export interface Message {
   role: 'system' | 'user' | 'assistant';

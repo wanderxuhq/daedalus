@@ -134,6 +134,36 @@ test('submitSubagentPrompt echoes user message into subagentMessages', () => {
   assert.deepEqual(s.subagentMessages[0], { role: 'user', content: [{ type: 'text', text: 'do it' }] });
 });
 
+test('tool_result diff merges into final message on done', () => {
+  let s = initialUiState();
+  // Simulate streaming: tool_call_start → tool_result (with diff) → done
+  s = applyEnvelope(s, ev('tool_call_start', { id: 't1', name: 'edit', input: {} }));
+  s = applyEnvelope(s, ev('tool_result', { id: 't1', name: 'edit', input: {}, content: 'Edited foo.ts', diff: '@@ -1 +1 @@\n-old\n+new' }));
+  // done: final message has tool_call without diff; merge should inject it
+  const doneMsg = { role: 'assistant', content: [{ type: 'tool_call', id: 't1', name: 'edit', input: {} }] };
+  s = applyEnvelope(s, { type: 'event', ev: { type: 'done', message: doneMsg } as unknown as CoreEvent });
+  // The message in state should now have diff merged
+  const msg = s.messages[s.messages.length - 1] as any;
+  const tc = msg.content.find((c: any) => c.type === 'tool_call');
+  assert.ok(tc, 'tool_call block exists');
+  assert.equal(tc.resultContent, 'Edited foo.ts', 'resultContent merged');
+  assert.equal(tc.diff, '@@ -1 +1 @@\n-old\n+new', 'diff merged');
+  assert.equal(tc.status, 'done');
+});
+
+test('tool_result diff merges into final message on turn_done', () => {
+  let s = initialUiState();
+  s = applyEnvelope(s, ev('tool_call_start', { id: 't2', name: 'edit', input: {} }));
+  s = applyEnvelope(s, ev('tool_result', { id: 't2', name: 'edit', input: {}, content: 'Edited bar.ts', diff: '@@ -1 +1 @@\n-a\n+b' }));
+  const tdMsg = { role: 'assistant', content: [{ type: 'tool_call', id: 't2', name: 'edit', input: {} }] };
+  s = applyEnvelope(s, { type: 'event', ev: { type: 'turn_done', message: tdMsg } as unknown as CoreEvent });
+  const msg = s.messages[s.messages.length - 1] as any;
+  const tc = msg.content.find((c: any) => c.type === 'tool_call');
+  assert.ok(tc, 'tool_call block exists');
+  assert.equal(tc.resultContent, 'Edited bar.ts', 'resultContent merged');
+  assert.equal(tc.diff, '@@ -1 +1 @@\n-a\n+b', 'diff merged');
+});
+
 function ev(type: CoreEvent['type'], extra: Record<string, unknown>): EventEnvelope {
   return { type: 'event', ev: { type, ...extra } as unknown as CoreEvent };
 }

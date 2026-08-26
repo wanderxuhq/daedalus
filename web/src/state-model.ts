@@ -228,7 +228,7 @@ export function mergeSnapshot(state: UiState, snap: SnapshotPayload): UiState {
     if (m.role === 'user') {
       for (const c of m.content) {
         if (c.type === 'tool_result' && 'toolCallId' in c) {
-          toolResults.set(c.toolCallId, { content: c.content, isError: c.isError });
+          toolResults.set(c.toolCallId, { content: c.content, diff: c.diff, isError: c.isError });
         }
       }
     }

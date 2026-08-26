@@ -277,6 +277,7 @@ export async function runAgent(params: RunAgentParams): Promise<string> {
           toolCallId: call.id,
           content: r.content,
           isError: r.isError,
+          ...(r.diff !== undefined ? { diff: r.diff } : {}),
         };
       });
       session.addMessage({ role: 'user', content: resultBlocks });
