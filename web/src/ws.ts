@@ -42,13 +42,14 @@ export function connectWs(opts: {
   let closed = false;
   let backoff = 1000;
   let timer: ReturnType<typeof setTimeout> | null = null;
+  let ws: WebSocket | null = null;
 
   const open = () => {
     if (closed) return;
     opts.onStatus('connecting');
-    const ws = new WebSocket(opts.url);
+    ws = new WebSocket(opts.url);
     currentWs = ws;
-    ws.onopen = () => { backoff = 1000; activeSend = (raw) => ws.send(raw); opts.onStatus('open'); };
+    ws.onopen = () => { backoff = 1000; activeSend = (raw) => ws!.send(raw); opts.onStatus('open'); };
     ws.onmessage = (m) => {
       const env = parseMessage(String(m.data));
       if (env) opts.onEnvelope(env);
@@ -56,20 +57,40 @@ export function connectWs(opts: {
     ws.onclose = () => {
       activeSend = null;
       currentWs = null;
+      ws = null;
       opts.onStatus('closed');
       if (!closed) {
         timer = setTimeout(open, backoff);
         backoff = Math.min(backoff * 2, 10_000);
       }
     };
-    ws.onerror = () => ws.close();
+    ws.onerror = () => ws!.close();
   };
+
+  // 页面从后台回到前台时，如果 WebSocket 断开则主动重连
+  const onVisibilityChange = () => {
+    if (document.visibilityState === 'visible' && !closed && (!ws || ws.readyState !== WebSocket.OPEN)) {
+      // 清除现有的重连定时器
+      if (timer) {
+        clearTimeout(timer);
+        timer = null;
+      }
+      // 重置退避时间，立即重连
+      backoff = 1000;
+      open();
+    }
+  };
+
+  // 监听页面可见性变化（移动端浏览器从后台回来时触发）
+  document.addEventListener('visibilitychange', onVisibilityChange);
   open();
 
   return () => {
     closed = true;
+    document.removeEventListener('visibilitychange', onVisibilityChange);
     if (timer) clearTimeout(timer);
     currentWs?.close();
     currentWs = null;
+    ws = null;
   };
 }
