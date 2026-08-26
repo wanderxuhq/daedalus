@@ -2,6 +2,7 @@ import type { CoreEvent, SubagentInfo as SubagentInfoBase } from '../../src/core
 import { TERMINALS } from '../../src/core/events.ts';
 import type { EventEnvelope, SnapshotPayload } from './types.ts';
 import type { Message } from '../../src/ai/types.ts';
+import type { ContentBlock } from './types/messages.ts';
 import type { StreamingMessage, StreamingContentBlock } from './types/messages.ts';
 
 export interface SubagentInfo extends SubagentInfoBase {
@@ -155,7 +156,29 @@ export function applyEnvelope(state: UiState, env: EventEnvelope): UiState {
         ? msgId === lastId
         : lastMsg === ev.message;
       if (!isDuplicate) {
-        messages = [...state.messages, ev.message];
+        // Merge tool result content from streaming message into the final message
+        const toolResults = new Map<string, { resultContent: string; diff?: string; status: 'done' | 'error' }>();
+        if (state.streamingMessage) {
+          for (const c of state.streamingMessage.content) {
+            if (c.type === 'tool_call' && c.resultContent !== undefined) {
+              toolResults.set(c.id, { resultContent: c.resultContent, diff: c.diff, status: c.status === 'error' ? 'error' : 'done' });
+            }
+          }
+        }
+        if (toolResults.size > 0) {
+          const merged = {
+            ...ev.message,
+            content: ev.message.content.map((b: { type: string; id?: string; [k: string]: unknown }) => {
+              if (b.type === 'tool_call' && b.id && toolResults.has(b.id)) {
+                return { ...b, ...toolResults.get(b.id) } as ContentBlock;
+              }
+              return b as ContentBlock;
+            }),
+          };
+          messages = [...state.messages, merged as Message];
+        } else {
+          messages = [...state.messages, ev.message];
+        }
       }
       streamingMessage = null; // done/turn_done 事件后清空流式消息
     } else if (ev.type === 'error') {
@@ -199,13 +222,40 @@ export function applyEnvelope(state: UiState, env: EventEnvelope): UiState {
 }
 
 export function mergeSnapshot(state: UiState, snap: SnapshotPayload): UiState {
+  // Extract tool results from user messages and build a lookup map
+  const toolResults = new Map<string, { content: string; diff?: string; isError?: boolean }>();
+  for (const m of snap.messages) {
+    if (m.role === 'user') {
+      for (const c of m.content) {
+        if (c.type === 'tool_result' && 'toolCallId' in c) {
+          toolResults.set(c.toolCallId, { content: c.content, isError: c.isError });
+        }
+      }
+    }
+  }
+
+  // Merge tool results into assistant messages' tool_call blocks
+  const mergedMessages = snap.messages
+    .filter(m => m.role !== 'user' || m.content.some(c => c.type === 'text'))
+    .map(m => {
+      if (m.role !== 'assistant') return m;
+      const hasToolCalls = m.content.some(c => c.type === 'tool_call');
+      if (!hasToolCalls || toolResults.size === 0) return m;
+      return {
+        ...m,
+        content: m.content.map(c => {
+          if (c.type === 'tool_call' && toolResults.has(c.id)) {
+            const r = toolResults.get(c.id)!;
+            return { ...c, resultContent: r.content, diff: r.diff, status: r.isError ? 'error' : 'done' };
+          }
+          return c;
+        }),
+      };
+    });
+
   return {
     ...state,
-    // 过滤掉不含文本内容的 user 消息（仅包含 tool_result 的消息），
-    // 保持与 live session 行为一致——这些消息在实时流中不会出现在渲染列表中。
-    messages: snap.messages.filter(m =>
-      m.role !== 'user' || m.content.some(c => c.type === 'text'),
-    ),
+    messages: mergedMessages,
     subagents: snap.subagents.map((a) => ({
       name: a.name, task: a.task,
       status: (a.status === 'done' || a.status === 'error' ? a.status : 'running') as SubagentInfo['status'],
@@ -217,7 +267,6 @@ export function mergeSnapshot(state: UiState, snap: SnapshotPayload): UiState {
     pendingPermission: snap.pendingPermission,
     error: snap.error ?? null,
     cwd: snap.cwd ?? '',
-    streamingMessage: null, // 快照重置时清空流式消息
-    // viewingSubagent 和 subagentMessages 保持不变——快照重置不应打断用户的子代理浏览。
+    streamingMessage: null,
   };
 }

@@ -29,7 +29,7 @@ export function MessageContent(props: {
           {/* ContentBlock 格式 */}
           {c.type === 'text' && render(c.text)}
           {c.type === 'thinking' && <Thinking text={c.thinking} />}
-          {c.type === 'tool_call' && <ToolCard tool={{ id: c.id, name: c.name, input: c.input, status: 'done' }} status="done" cwd={props.cwd} />}
+          {c.type === 'tool_call' && <ToolCard tool={{ id: c.id, name: c.name, input: c.input, content: c.resultContent, diff: c.diff, status: c.status === 'error' ? 'error' : 'done' }} status={c.status === 'error' ? 'error' : 'done'} cwd={props.cwd} />}
           
           {/* CoreEvent 格式 (用于实时事件渲染) */}
           {c.type === 'text_delta' && render(c.text)}

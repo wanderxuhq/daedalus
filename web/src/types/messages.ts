@@ -7,7 +7,7 @@
 export type ContentBlock =
   | { type: 'text'; text: string }
   | { type: 'thinking'; thinking: string; signature?: string }
-  | { type: 'tool_call'; id: string; name: string; input: unknown }
+  | { type: 'tool_call'; id: string; name: string; input: unknown; resultContent?: string; diff?: string; status?: string }
   | { type: 'tool_result'; toolCallId: string; content: string; isError?: boolean };
 
 /** Message with role and content blocks */
