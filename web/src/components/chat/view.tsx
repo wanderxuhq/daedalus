@@ -1,4 +1,4 @@
-import { createEffect, createMemo, For, Show } from 'solid-js';
+import { createEffect, createMemo, createSignal, For, onCleanup, Show } from 'solid-js';
 import { MessageBubble } from './message.tsx';
 import { MessageContent, type RenderableContent } from './message-content.tsx';
 import { sendWsMessage } from '../../ws.ts';
@@ -28,6 +28,7 @@ export function ChatView(props: {
   class?: string;
 }) {
   let chatStreamRef: HTMLDivElement | undefined;
+  const [isNearBottom, setIsNearBottom] = createSignal(true);
 
   // 合并历史消息 + 流式内容为统一的渲染列表
   const items = createMemo<RenderableItem[]>(() => {
@@ -47,12 +48,7 @@ export function ChatView(props: {
     return result;
   });
 
-  // Auto-scroll
-  const isNearBottom = createMemo(() => {
-    if (!chatStreamRef) return true;
-    const { scrollTop, scrollHeight, clientHeight } = chatStreamRef;
-    return scrollHeight - scrollTop - clientHeight < 120;
-  });
+  // Auto-scroll：用户在底部时，新消息/流式内容到达后自动滚到底部
   createEffect(() => {
     const _ = items();
     const _2 = props.pendingPermission;
@@ -61,6 +57,19 @@ export function ChatView(props: {
         chatStreamRef.scrollTo({ top: chatStreamRef.scrollHeight, behavior: 'smooth' });
       }
     });
+  });
+
+  // 持续追踪滚动位置，在 scroll 事件中更新 signal
+  const updateNearBottom = () => {
+    if (!chatStreamRef) return;
+    const { scrollTop, scrollHeight, clientHeight } = chatStreamRef;
+    setIsNearBottom(scrollHeight - scrollTop - clientHeight < 120);
+  };
+  createEffect(() => {
+    const el = chatStreamRef;
+    if (!el) return;
+    el.addEventListener('scroll', updateNearBottom, { passive: true });
+    onCleanup(() => el.removeEventListener('scroll', updateNearBottom));
   });
 
   return (
