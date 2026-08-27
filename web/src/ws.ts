@@ -44,13 +44,24 @@ export function connectWs(opts: {
   let timer: ReturnType<typeof setTimeout> | null = null;
   let ws: WebSocket | null = null;
 
+  /** 回前台触发的重连中，抑制 status 信号更新，避免 banner 闪烁导致布局抖动。 */
+  let suppressStatus = false;
+  /** 上次收到消息的时间戳，用于500ms 僵尸检测。 */
+  let lastMsgAt = Date.now();
+
   const open = () => {
     if (closed) return;
-    opts.onStatus('connecting');
+    if (!suppressStatus) opts.onStatus('connecting');
     ws = new WebSocket(opts.url);
     currentWs = ws;
-    ws.onopen = () => { backoff = 1000; activeSend = (raw) => ws!.send(raw); opts.onStatus('open'); };
+    ws.onopen = () => {
+      backoff = 1000;
+      activeSend = (raw) => ws!.send(raw);
+      opts.onStatus('open');
+      suppressStatus = false;
+    };
     ws.onmessage = (m) => {
+      lastMsgAt = Date.now();
       const env = parseMessage(String(m.data));
       if (env) opts.onEnvelope(env);
     };
@@ -58,7 +69,7 @@ export function connectWs(opts: {
       activeSend = null;
       currentWs = null;
       ws = null;
-      opts.onStatus('closed');
+      if (!suppressStatus) opts.onStatus('closed');
       if (!closed) {
         timer = setTimeout(open, backoff);
         backoff = Math.min(backoff * 2, 10_000);
@@ -68,25 +79,30 @@ export function connectWs(opts: {
   };
 
   // 页面从后台回到前台时，确保能收到最新消息。
-  // WebSocket 断开了立即重连；还活着时依赖服务端的 ping/pong 检测僵尸（30s 周期），
-  // 不做 500ms 强制重连——空闲连接回前台不会触发无意义的重连和 banner 闪烁。
+  // 连接断开立即重连；连接还活着时等500ms——没收到消息说明可能是僵尸连接，也重连。
+  // suppressStatus 抑制重连期间的 status 信号更新，避免 banner 闪烁导致布局抖动。
   const onVisibilityChange = () => {
     if (document.visibilityState !== 'visible' || closed) return;
-    // 清除现有的重连定时器
     if (timer) { clearTimeout(timer); timer = null; }
 
     const doReconnect = () => {
+      suppressStatus = true;
       if (ws) { ws.close(); ws = null; activeSend = null; currentWs = null; }
       backoff = 1000;
       open();
     };
 
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      // 连接已断开，立即重连
       doReconnect();
+    } else {
+      // 连接还活着——等500ms 看是否有新消息；没有则认为是僵尸，强制重连。
+      const prev = lastMsgAt;
+      setTimeout(() => {
+        // 500ms 内收到了新消息，或者连接已关闭，不需要重连
+        if (lastMsgAt > prev || !ws || ws.readyState !== WebSocket.OPEN) return;
+        doReconnect();
+      }, 500);
     }
-    // 连接还活着：不做额外检查，依赖服务端 ping/pong 检测僵尸。
-    // 避免空闲连接回前台时强制重连导致 banner 闪烁和布局抖动。
   };
 
   // 监听页面可见性变化（移动端浏览器从后台回来时触发）
