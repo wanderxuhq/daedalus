@@ -5,9 +5,9 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { loadMcpConfig } from '../../src/mcp/config.ts';
 
-test('loadMcpConfig returns empty object when file does not exist', () => {
+test('loadMcpConfig returns empty mcpServers when file does not exist', () => {
   const result = loadMcpConfig('/nonexistent/path/mcp.json');
-  assert.deepEqual(result, {});
+  assert.deepEqual(result, { mcpServers: {} });
 });
 
 test('loadMcpConfig parses valid mcp.json', () => {
@@ -27,21 +27,21 @@ test('loadMcpConfig parses valid mcp.json', () => {
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('loadMcpConfig returns empty object for invalid JSON', () => {
+test('loadMcpConfig returns empty mcpServers for invalid JSON', () => {
   const dir = mkdtempSync(join(tmpdir(), 'mcp-test-'));
   const filePath = join(dir, 'mcp.json');
   writeFileSync(filePath, 'not json{{{');
   const result = loadMcpConfig(filePath);
-  assert.deepEqual(result, {});
+  assert.deepEqual(result, { mcpServers: {} });
   rmSync(dir, { recursive: true, force: true });
 });
 
-test('loadMcpConfig returns empty object when mcpServers is missing', () => {
+test('loadMcpConfig returns empty mcpServers when mcpServers is missing', () => {
   const dir = mkdtempSync(join(tmpdir(), 'mcp-test-'));
   const filePath = join(dir, 'mcp.json');
   writeFileSync(filePath, JSON.stringify({ other: true }));
   const result = loadMcpConfig(filePath);
-  assert.deepEqual(result, {});
+  assert.deepEqual(result, { mcpServers: {} });
   rmSync(dir, { recursive: true, force: true });
 });
 

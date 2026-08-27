@@ -17,8 +17,8 @@ export function loadMcpConfig(configPath?: string): McpConfig {
     if (parsed && typeof parsed === 'object' && 'mcpServers' in parsed && typeof parsed.mcpServers === 'object') {
       return parsed as McpConfig;
     }
-    return {};
+    return { mcpServers: {} };
   } catch {
-    return {};
+    return { mcpServers: {} };
   }
 }

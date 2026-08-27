@@ -82,7 +82,7 @@ export class McpManager {
       const transport = new StdioClientTransport({
         command: entry.config.command,
         args: entry.config.args,
-        env: entry.config.env ? { ...process.env, ...entry.config.env } : undefined,
+        env: entry.config.env ? { ...process.env as Record<string, string>, ...entry.config.env } : undefined,
       });
 
       const client = new Client({ name: 'daedalus', version: '0.1.0' });
@@ -93,14 +93,14 @@ export class McpManager {
         return;
       }
 
-      entry.client = client;
+      entry.client = client as unknown as McpToolClient;
       entry.state = 'connected';
 
       // Discover capabilities
       try {
         const toolsResult = await client.listTools();
         for (const mcpTool of toolsResult.tools) {
-          const adapted = wrapMcpTool(mcpTool, name, client);
+          const adapted = wrapMcpTool({ ...mcpTool, description: mcpTool.description ?? mcpTool.name }, name, client as unknown as McpToolClient);
           entry.tools.push(adapted);
         }
       } catch { /* server may not support tools */ }

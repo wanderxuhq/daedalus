@@ -40,7 +40,7 @@ export function wrapMcpTool(
   return {
     name: `mcp__${serverName}__${mcpTool.name}`,
     description: mcpTool.description,
-    inputSchema: mcpTool.inputSchema,
+    inputSchema: mcpTool.inputSchema as Record<string, unknown>,
     execute: async (input: unknown, _ctx: ToolContext): Promise<ToolResult> => {
       try {
         const result = await client.callTool({ name: mcpTool.name, arguments: input });
