@@ -38,6 +38,12 @@ export interface BuildSystemPromptOptions {
    * concatenated text from {@link loadMemory}; the caller reads the files once.
    */
   memory?: string;
+  /**
+   * Dynamic tool-line descriptions for MCP tools. Keys are tool names
+   * (e.g. `mcp__fs__read_file`), values are the human-readable one-liners
+   * to show in the system prompt.
+   */
+  mcpToolLines?: Record<string, string>;
 }
 
 /**
@@ -67,7 +73,7 @@ export function buildSystemPrompt(opts: BuildSystemPromptOptions = {}): string {
 
   const toolRows: string[] = [];
   for (const name of tools) {
-    const line = TOOL_LINES[name];
+    const line = opts.mcpToolLines?.[name] ?? TOOL_LINES[name];
     if (!line) continue;
     if ((name === 'ls' || name === 'grep' || name === 'glob') && hasLs && hasGrep && hasGlob) continue; // merged below
     toolRows.push(line);
