@@ -3,7 +3,7 @@ html, body { margin: 0; height: 100%; background: #111; color: #e5e5e5; font-fam
 #root { height: 100%; }
 
 /* layout: topbar / main (chat-stream + subagents-panel) / chat-input */
-.app { height: 100%; display: flex; flex-direction: column; }
+.app { height: 100%; display: flex; flex-direction: column; position: relative; }
 .topbar { display: flex; align-items: center; gap: 8px; padding: 8px 12px; border-bottom: 1px solid #333; background: #161616; }
 .main { flex: 1; display: flex; overflow: hidden; }
 .chat-stream { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
@@ -84,7 +84,7 @@ html, body { margin: 0; height: 100%; background: #111; color: #e5e5e5; font-fam
 .drawer { position: fixed; top: 0; left: 0; bottom: 0; width: 280px; background: #161616; z-index: 11; padding: 12px; overflow-y: auto; }
 .ws-dot { width: 8px; height: 8px; border-radius: 50%; background: #e5484d; }
 .ws-dot.open { background: #46a758; }
-.reconnect-banner { background: #3a2a00; color: #f0d77a; padding: 4px 12px; text-align: center; font-size: 12px; }
+.reconnect-banner { position: absolute; top: 0; left: 0; right: 0; z-index: 5; background: #3a2a00; color: #f0d77a; padding: 4px 12px; text-align: center; font-size: 12px; }
 .sessions { height: 100%; overflow-y: auto; padding: 12px; }
 .session-list { list-style: none; padding: 0; margin: 0; }
 .session-row { border-bottom: 1px solid #333; padding: 10px 4px; display: flex; align-items: center; gap: 10px; }
