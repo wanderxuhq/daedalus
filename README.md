@@ -245,6 +245,35 @@ History is trimmed at whole-turn boundaries when the estimated token count excee
 
 Deferred (see the design spec): model-driven summarization and exact token counting.
 
+## MCP Integration
+
+Daedalus supports the Model Context Protocol (MCP), connecting external tool servers and exposing their capabilities to the agent.
+
+### Setup
+
+1. Install `@modelcontextprotocol/sdk` as an optional dependency:
+
+        npm install --save-optional @modelcontextprotocol/sdk
+
+2. Create `~/.daedalus/mcp.json` (Claude Desktop format):
+
+        {
+          "mcpServers": {
+            "filesystem": {
+              "command": "npx",
+              "args": ["-y", "@modelcontextprotocol/server-filesystem", "/tmp"]
+            }
+          }
+        }
+
+MCP servers connect automatically at startup. Tools are namespaced as `mcp__<server>__<tool>` and appear alongside built-in tools.
+
+### Capabilities
+
+- **Tools** — MCP tools are wrapped as native Daedalus tools (namespaced `mcp__<server>__<tool>`)
+- **Resources** — Accessible via `mcp_read_resource` and `mcp_list_resources` tools
+- **Prompts** — Accessible via `mcp_get_prompt` and `mcp_list_prompts` tools
+
 ## Roadmap
 
 This is a first vertical slice. Deferred items — a full permissions system (rules, allow/deny/ask, per-project settings), deeper configuration, a richer TUI, more tools (WebFetch/WebSearch), and more provider adapters — are tracked in the design spec:
