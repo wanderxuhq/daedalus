@@ -109,7 +109,6 @@ export async function main(argv: string[]): Promise<void> {
 }
 
 // When run directly (node src/server/server.ts / dist/server/server.js), start the server; when imported (tests), skip execution.
-// Guard copied from anther cli.ts.
 import { pathToFileURL } from 'node:url';
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   main(process.argv.slice(2)).catch((e) => {
