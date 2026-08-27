@@ -4,9 +4,6 @@
   "description": "A Claude Code-style terminal agent with a provider-agnostic AI access layer",
   "license": "MIT",
   "type": "module",
-  "bin": {
-    "daedalus": "dist/cli/main.js"
-  },
   "main": "dist/index.js",
   "files": [
     "dist"
