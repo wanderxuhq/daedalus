@@ -51,6 +51,16 @@ export function buildServer(deps: ServerDeps): {
 }
 
 export async function main(argv: string[]): Promise<void> {
+  // Prevent silent crashes from stray unhandled rejections or uncaught exceptions.
+  // Node.js ≥ 15 exits on unhandledRejection; these handlers log the cause before dying,
+  // so the failure is diagnosable instead of a bare "server died" with no output.
+  process.on('unhandledRejection', (reason) => {
+    console.error('[FATAL] unhandledRejection:', reason);
+  });
+  process.on('uncaughtException', (err) => {
+    console.error('[FATAL] uncaughtException:', err);
+  });
+
   let port = Number(process.env.DAEDALUS_WEB_PORT ?? 3100);
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === '--port') {

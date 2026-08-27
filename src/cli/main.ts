@@ -14,6 +14,16 @@ import { parseFlags } from './flags.ts';
 import { runOnce } from './once.ts';
 import { main as webMain } from '../server/server.ts';
 
+// Prevent silent crashes from stray unhandled rejections or uncaught exceptions.
+// Node.js ≥ 15 exits on unhandledRejection; these handlers log the cause before dying,
+// so the failure is diagnosable instead of a bare "server died" with no output.
+process.on('unhandledRejection', (reason) => {
+  console.error('[FATAL] unhandledRejection:', reason);
+});
+process.on('uncaughtException', (err) => {
+  console.error('[FATAL] uncaughtException:', err);
+});
+
 const flags = parseFlags(process.argv.slice(2));
 if (flags.help) {
   console.log('daedalus — a terminal agent\n\nUsage: daedalus [--provider openai|anthropic] [--model M] [--base-url URL] [--resume [id]] [--auto] [-p PROMPT] [--output-format text|json] [--version]\n\n--auto auto-approves tool permissions (bash/write run without y/n prompts).\n-p/--prompt runs one prompt and exits (scripts/CI); combine with --output-format json for machine-readable output.\nExtended thinking is ON by default; disable with DAEDALUS_THINKING=0 or "thinking": false in config.\n\nConfig: ~/.daedalus/config.json and DAEDALUS_* env vars. First run starts an interactive setup.');
