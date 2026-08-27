@@ -6,7 +6,7 @@ import type { ContentBlock } from '../../types/messages.ts';
 import type { CoreEvent } from '../../../../src/core/events.ts';
 
 /** Union type for all renderable content items */
-type RenderableContent =
+export type RenderableContent =
   | ContentBlock
   | { type: 'text_delta'; text: string }
   | { type: 'thinking_delta'; thinking: string }

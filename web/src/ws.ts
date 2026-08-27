@@ -51,7 +51,6 @@ export function connectWs(opts: {
     currentWs = ws;
     ws.onopen = () => { backoff = 1000; activeSend = (raw) => ws!.send(raw); opts.onStatus('open'); };
     ws.onmessage = (m) => {
-      lastMessageAt = Date.now();
       const env = parseMessage(String(m.data));
       if (env) opts.onEnvelope(env);
     };
@@ -69,9 +68,8 @@ export function connectWs(opts: {
   };
 
   // 页面从后台回到前台时，确保能收到最新消息。
-  // 如果 WebSocket 断开了，立即重连获取 snapshot；
-  // 如果还活着，发送一个 ping 等待 pong，超时则认为连接已死，强制重连。
-  let lastMessageAt = Date.now();
+  // WebSocket 断开了立即重连；还活着时依赖服务端的 ping/pong 检测僵尸（30s 周期），
+  // 不做 500ms 强制重连——空闲连接回前台不会触发无意义的重连和 banner 闪烁。
   const onVisibilityChange = () => {
     if (document.visibilityState !== 'visible' || closed) return;
     // 清除现有的重连定时器
@@ -86,16 +84,9 @@ export function connectWs(opts: {
     if (!ws || ws.readyState !== WebSocket.OPEN) {
       // 连接已断开，立即重连
       doReconnect();
-    } else {
-      // 连接还活着——等 500ms 看是否有新消息到达；
-      // 如果这段时间没收到任何消息，说明连接可能是僵尸，强制重连。
-      const prev = lastMessageAt;
-      setTimeout(() => {
-        // 连接已关闭或收到了新消息，不需要重连
-        if (!ws || ws.readyState !== WebSocket.OPEN || lastMessageAt > prev) return;
-        doReconnect();
-      }, 500);
     }
+    // 连接还活着：不做额外检查，依赖服务端 ping/pong 检测僵尸。
+    // 避免空闲连接回前台时强制重连导致 banner 闪烁和布局抖动。
   };
 
   // 监听页面可见性变化（移动端浏览器从后台回来时触发）

@@ -5,6 +5,35 @@ import type { Message } from '../../src/ai/types.ts';
 import type { ContentBlock } from './types/messages.ts';
 import type { StreamingMessage, StreamingContentBlock } from './types/messages.ts';
 
+/** 比较两个 ContentBlock 数组是否内容相等（浅比较每个块的字段）。 */
+function contentEquals(a: ContentBlock[], b: ContentBlock[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    const ca = a[i], cb = b[i];
+    if (ca.type !== cb.type) return false;
+    switch (ca.type) {
+      case 'text':
+        if (ca.text !== (cb as typeof ca).text) return false;
+        break;
+      case 'thinking':
+        if (ca.thinking !== (cb as typeof ca).thinking || ca.signature !== (cb as typeof ca).signature) return false;
+        break;
+      case 'tool_call':
+        // input 不参与比较：streaming 过程中 input 是字符串（delta 拼接），
+        // 快照中是对象（structuredClone），两者永远不等，会导致比较误判。
+        if (ca.id !== (cb as typeof ca).id || ca.name !== (cb as typeof ca).name ||
+            ca.status !== (cb as typeof ca).status || ca.resultContent !== (cb as typeof ca).resultContent ||
+            ca.diff !== (cb as typeof ca).diff) return false;
+        break;
+      case 'tool_result':
+        if (ca.toolCallId !== (cb as typeof ca).toolCallId || ca.content !== (cb as typeof ca).content ||
+            ca.isError !== (cb as typeof ca).isError || ca.diff !== (cb as typeof ca).diff) return false;
+        break;
+    }
+  }
+  return true;
+}
+
 export interface SubagentInfo extends SubagentInfoBase {
   /** 该 agent 的实时 CoreEvent 累积（detail 页 live 渲染用；snapshot 重置）。 */
   events: CoreEvent[];
@@ -236,7 +265,6 @@ export function mergeSnapshot(state: UiState, snap: SnapshotPayload): UiState {
 
   // Merge tool results into assistant messages' tool_call blocks
   const mergedMessages = snap.messages
-    .filter(m => m.role !== 'user' || m.content.some(c => c.type === 'text'))
     .map(m => {
       if (m.role !== 'assistant') return m;
       const hasToolCalls = m.content.some(c => c.type === 'tool_call');
@@ -253,9 +281,42 @@ export function mergeSnapshot(state: UiState, snap: SnapshotPayload): UiState {
       };
     });
 
+  // 复用本地旧引用：如果快照消息和本地消息 _id 相同且内容相等，保留旧对象，
+  // 避免 SolidJS 因引用变化触发无意义的重新渲染（切后台回来时 snapshot 重连导致的抖动）。
+  const prevByid = new Map<number, Message>();
+  for (const m of state.messages) {
+    if (m._id !== undefined) prevByid.set(m._id, m);
+  }
+  const reconciledMessages = mergedMessages.map(m => {
+    if (m._id === undefined) return m;
+    const prev = prevByid.get(m._id);
+    if (prev && prev.role === m.role && contentEquals(prev.content, m.content)) return prev;
+    return m;
+  });
+
+  // 如果 reconciled 后的消息数组和原数组完全一样（引用没变），且其他字段也没变，
+  // 直接返回旧 state，避免 SolidJS 无意义的重渲染。
+  const sameMessages = reconciledMessages === state.messages
+    || (reconciledMessages.length === state.messages.length
+        && reconciledMessages.every((m, i) => m === state.messages[i]));
+  const sameLog = snap.log.length === state.log.length;
+  const sameSubagents = snap.subagents.length === state.subagents.length
+    && snap.subagents.every((a, i) => {
+      const cur = state.subagents[i];
+      return cur.name === a.name && cur.status === a.status
+        && cur.messageCount === a.messageCount && cur.task === a.task;
+    });
+  if (sameMessages && sameLog && sameSubagents
+      && state.running === snap.running
+      && state.cwd === (snap.cwd ?? '')
+      && state.error === (snap.error ?? null)
+      && state.pendingPermission === snap.pendingPermission) {
+    return state;
+  }
+
   return {
     ...state,
-    messages: mergedMessages,
+    messages: reconciledMessages,
     subagents: snap.subagents.map((a) => ({
       name: a.name, task: a.task,
       status: (a.status === 'done' || a.status === 'error' ? a.status : 'running') as SubagentInfo['status'],

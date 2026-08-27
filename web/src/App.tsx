@@ -1,13 +1,12 @@
-import { createSignal, createEffect, createMemo, For, Show } from 'solid-js';
+import { createSignal, createEffect, Show } from 'solid-js';
 import { state, handleEnvelope, setAutoApproveLocal, submitPrompt, removeLastUserMessage } from './stores.ts';
 import { AiError } from '../../src/ai/errors.ts';
 import { chat, resumeSession, putConfig, getConfig, abortAgent } from './api.ts';
 import { connectWs, sendWsMessage, requestReconnect, type WsStatus } from './ws.ts';
 import { parseHash, onHashChange, type Route } from './routes.ts';
 import { useIsNarrow } from './use-is-narrow.ts';
+import { ChatView } from './components/chat/view.tsx';
 import { ChatInput } from './components/chat/input.tsx';
-import { MessageBubble } from './components/chat/message.tsx';
-import { PermissionCard } from './components/chat/permission-card.tsx';
 import { Badge } from './components/common/badge.tsx';
 import { SubagentPanel } from './components/agents/panel.tsx';
 import { AgentDetail } from './components/agents/detail.tsx';
@@ -31,12 +30,10 @@ export function App() {
   createEffect(() => { void getConfig().then((c) => setAutoApproveLocal(c.autoApprove)).catch(() => {}); });
 
   const onSend = async (prompt: string) => {
-    submitPrompt(prompt); // 本地立即回显 user 消息
-    const result = await chat(prompt); // 结果通过 ws 事件回流
+    submitPrompt(prompt);
+    const result = await chat(prompt);
     if (result.status === 'error') {
-      // POST 失败时显示错误（ws 不会收到事件）
       handleEnvelope({ type: 'event', ev: { type: 'error', error: new AiError('server', result.error) } });
-      // 如果是 409 错误（运行中），回滚用户消息
       if (result.error.includes('already in progress')) {
         removeLastUserMessage();
       }
@@ -47,15 +44,11 @@ export function App() {
     setAutoApproveLocal(next);
     await putConfig({ autoApprove: next }).catch(() => {});
   };
-
   const onResumeSession = async (id: string) => {
     try {
       await resumeSession(id);
-      // 服务端 resume 后不会主动推送 snapshot，需要断开 WS 触发重连以拉取最新状态
       requestReconnect();
-    } catch (e) {
-      // 恢复失败时不做额外处理，用户可以重试
-    }
+    } catch { /* user can retry */ }
   };
   const onAbort = async (name?: string) => {
     await abortAgent(name).catch(() => {});
@@ -64,39 +57,15 @@ export function App() {
     location.hash = `#/agent/${encodeURIComponent(name)}`;
   };
 
-  // Auto-scroll: scroll to bottom when new messages arrive, but only if the
-  // user was already near the bottom (so we don't interrupt their reading).
-  let chatStreamRef: HTMLDivElement | undefined;
-  const isNearBottom = createMemo(() => {
-    if (!chatStreamRef) return true; // first render: assume near bottom
-    const { scrollTop, scrollHeight, clientHeight } = chatStreamRef;
-    return scrollHeight - scrollTop - clientHeight < 120; // within 120px of bottom
-  });
-  createEffect(() => {
-    // Subscribe to messages and streamingMessage changes
-    const msgs = state().messages;
-    const sm = state().streamingMessage;
-    // Queue microtask so DOM updates first, then we measure scroll position
-    queueMicrotask(() => {
-      if (chatStreamRef && isNearBottom()) {
-        chatStreamRef.scrollTo({ top: chatStreamRef.scrollHeight, behavior: 'smooth' });
-      }
-    });
-  });
-
   return (
     <Show
       when={route().route === 'main'}
-      fallback={
-        // 偏差（B）：plan 片段在三元里两次调用 route()，TS 无法据此收窄 Route 联合类型；
-        // 取一次局部值以获得判别收窄，行为与 plan 意图一致。
-        (() => {
-          const r = route();
-          return r.route === 'agent'
-            ? <AgentDetail name={r.name} />
-            : <SessionList />;
-        })()
-      }
+      fallback={(() => {
+        const r = route();
+        return r.route === 'agent'
+          ? <AgentDetail name={r.name} />
+          : <SessionList />;
+      })()}
     >
       <div class="app">
         <header class="topbar">
@@ -107,17 +76,12 @@ export function App() {
         </header>
         <Show when={wsStatus() !== 'open'}><div class="reconnect-banner">{t('app.reconnect')}</div></Show>
         <div class="main">
-          <div class="chat-stream" ref={chatStreamRef}>
-            <For each={state().messages}>
-              {(m) => <MessageBubble message={m} cwd={state().cwd} />}
-            </For>
-            <Show when={state().streamingMessage}>
-              {(sm) => <MessageBubble message={sm()} cwd={state().cwd} />}
-            </Show>
-            <Show when={state().pendingPermission}>
-              <PermissionCard pending={state().pendingPermission} send={(m) => sendWsMessage(m)} />
-            </Show>
-          </div>
+          <ChatView
+            messages={state().messages}
+            streamingContent={state().streamingMessage ? [state().streamingMessage!] : undefined}
+            pendingPermission={state().pendingPermission}
+            cwd={state().cwd}
+          />
           {!isNarrow() && <SubagentPanel subagents={state().subagents} onView={navigateToAgent} onAbort={(name) => onAbort(name)} />}
         </div>
         {isNarrow() && (
