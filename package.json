@@ -39,5 +39,8 @@
     "typescript": "^5.9.3",
     "vite": "^6.4.3",
     "vite-plugin-solid": "^2.11.14"
+  },
+  "optionalDependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0"
   }
 }
