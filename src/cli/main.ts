@@ -4,6 +4,7 @@ import type { DaedalusConfig } from '../config/config.ts';
 import type { AiProviderName } from '../ai/index.ts';
 import { createAiClient } from '../ai/index.ts';
 import { DaedalusEngine } from '../core/engine.ts';
+import { loadMcpConfig } from '../mcp/config.ts';
 import { SessionStore } from '../core/session-store.ts';
 import type { SessionState } from '../core/session.ts';
 import { runRepl } from './repl.ts';
@@ -81,6 +82,9 @@ if (flags.resume) {
   }
 }
 
+// Load MCP server configuration from ~/.daedalus/mcp.json
+const mcpConfig = loadMcpConfig();
+
 // Single-shot mode keeps stdout clean for the prompt's own output.
 if (flags.prompt === undefined) {
   console.log(`${ANSI.bold}Daedalus${ANSI.reset} — agent ready (${config.provider}${config.model ? ` / ${config.model}` : ''})`);
@@ -95,6 +99,7 @@ const engine = new DaedalusEngine({
   thinking: base.thinking,
   thinkingBudgetTokens: base.thinkingBudgetTokens,
   model: config.model,
+  mcpConfig,
   ...(base.hooks ? { hooks: base.hooks } : {}),
 });
 const autoApprove = flags.auto === '1' || base.autoApprove === true;
