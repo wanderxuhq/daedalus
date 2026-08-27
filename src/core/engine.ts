@@ -25,6 +25,8 @@ import { createConsultTool } from './consult.ts';
 import { loadMemory, MEMORY_FILE, type LoadedMemory } from './memory.ts';
 import { runHook, NOTIFICATION_AFTER_MS, type HookConfig } from './hooks.ts';
 import { clearSpilledOutputs } from '../tools/output.ts';
+import { McpManager } from '../mcp/manager.ts';
+import type { McpConfig } from '../mcp/types.ts';
 
 export const DEFAULT_MAX_CONTEXT_TOKENS = 100_000;
 
@@ -47,6 +49,8 @@ export interface EngineOptions {
   model?: string;
   /** Lifecycle hooks: PreToolUse/PostToolUse around tool calls, stop on dispose, notification on long turns. */
   hooks?: HookConfig;
+  /** MCP server configuration. If provided, McpManager connects on construction. */
+  mcpConfig?: McpConfig;
   /** Extended thinking on by default; set false to disable. */
   thinking?: boolean;
   /** Thinking budget in tokens (Anthropic) / effort (OpenAI-compatible). */
@@ -117,6 +121,8 @@ export class DaedalusEngine {
   private shells: ShellRegistry;
   /** Durable project memory (DAEDALUS.md) read once at construction. */
   private memory: LoadedMemory = { sources: [], text: '' };
+  /** MCP manager for connected MCP servers; null when MCP is disabled. */
+  private mcpManager: McpManager | null = null;
   /** Active AbortController for the current run(); null when idle. */
   private abortController: AbortController | null = null;
 
@@ -152,7 +158,18 @@ export class DaedalusEngine {
     // One shell per agent (main + each named subagent), shared by all tools;
     // bash dispatches on ctx.agent. Cleared on dispose.
     this.shells = new ShellRegistry(opts.cwd);
-    const builtinTools = createTools(this.shells);
+    // MCP: create manager and start async connections
+    if (opts.mcpConfig && Object.keys(opts.mcpConfig.mcpServers).length > 0) {
+      this.mcpManager = new McpManager(opts.mcpConfig);
+      this.mcpManager.start();
+    }
+    const builtinTools = [...createTools(this.shells)];
+    // Add MCP tools to the builtin pool so subagents get them too
+    if (this.mcpManager) {
+      builtinTools.push(...this.mcpManager.getTools());
+      builtinTools.push(...this.mcpManager.getResourceTools());
+      builtinTools.push(...this.mcpManager.getPromptTools());
+    }
     const byName = new Map(builtinTools.map((t) => [t.name, t]));
     const mainBuiltin = this.mainAgentTools.filter((n) => byName.has(n)).map((n) => byName.get(n)!);
     const hasSkill = this.mainAgentTools.includes(SKILL_TOOL_NAME);
@@ -163,10 +180,26 @@ export class DaedalusEngine {
     // (delegate first, per DEFAULT_MAIN_AGENT_TOOLS), so the model sees the
     // delegation channel as its primary tool.
     const systemTools = [...this.mainAgentTools];
+    // Add MCP tool names to the system prompt tool list
+    const mcpToolLines: Record<string, string> = {};
+    if (this.mcpManager) {
+      for (const tool of this.mcpManager.getTools()) {
+        systemTools.push(tool.name);
+        mcpToolLines[tool.name] = `- ${tool.name}: ${tool.description}`;
+      }
+      for (const tool of this.mcpManager.getResourceTools()) {
+        systemTools.push(tool.name);
+        mcpToolLines[tool.name] = `- ${tool.name}: ${tool.description}`;
+      }
+      for (const tool of this.mcpManager.getPromptTools()) {
+        systemTools.push(tool.name);
+        mcpToolLines[tool.name] = `- ${tool.name}: ${tool.description}`;
+      }
+    }
     if (opts.initialState) {
       this.restoreState(opts.initialState);
     } else {
-      this.session.addMessage({ role: 'system', content: [{ type: 'text', text: buildSystemPrompt({ tools: systemTools, memory: this.memory.text }) }] });
+      this.session.addMessage({ role: 'system', content: [{ type: 'text', text: buildSystemPrompt({ tools: systemTools, memory: this.memory.text, mcpToolLines }) }] });
     }
     // Track token usage across runs (REPL `/cost`). Subagent usage events are
     // forwarded onto this bus by the delegate tools (onEvent), so /cost covers
@@ -235,6 +268,10 @@ export class DaedalusEngine {
       })] : []),
       ...mainBuiltin,
       ...(hasSkill ? [createSkillTool(this.registry, this.session)] : []),
+      // MCP tools: tools, resource tools, prompt tools
+      ...(this.mcpManager ? this.mcpManager.getTools() : []),
+      ...(this.mcpManager ? this.mcpManager.getResourceTools() : []),
+      ...(this.mcpManager ? this.mcpManager.getPromptTools() : []),
     ];
   }
 
@@ -669,6 +706,9 @@ export class DaedalusEngine {
   }
 
   async dispose(): Promise<void> {
+    if (this.mcpManager) {
+      await this.mcpManager.dispose();
+    }
     await this.persist();
     // Stop hook: the session's last chance to run project automation before the
     // engine shuts down. Advisory — a failing hook never blocks disposal.
