@@ -79,6 +79,7 @@ export function App() {
           <ChatView
             messages={state().messages}
             streamingContent={state().streamingMessage ? [state().streamingMessage!] : undefined}
+            streamingVersion={state().streamingVersion}
             pendingPermission={state().pendingPermission}
             cwd={state().cwd}
           />

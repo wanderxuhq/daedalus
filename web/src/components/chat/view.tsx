@@ -20,6 +20,8 @@ export function ChatView(props: {
   messages: Message[];
   /** 实时流式内容（主对话传 streamingMessage，subagent 传 CoreEvent[]）。 */
   streamingContent?: Message[] | CoreEvent[];
+  /** 流式消息版本号：内容原地修改时递增，触发 items memo 重算。 */
+  streamingVersion?: number;
   /** 待处理的权限请求。 */
   pendingPermission?: { id: string; action: string; target: string } | null;
   /** 工作目录。 */
@@ -32,6 +34,7 @@ export function ChatView(props: {
 
   // 合并历史消息 + 流式内容为统一的渲染列表
   const items = createMemo<RenderableItem[]>(() => {
+    const _v = props.streamingVersion; // 依赖版本号：内容原地修改时触发重算
     const result: RenderableItem[] = props.messages.map((m) => ({ kind: 'message', data: m }));
     const sc = props.streamingContent;
     if (sc && sc.length > 0) {

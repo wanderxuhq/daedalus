@@ -53,14 +53,16 @@ export interface UiState {
   viewingSubagent: string | null;
   /** 当前查看的子代理的消息列表。 */
   subagentMessages: (Message | CoreEvent)[];
-  /** 当前正在流式输出的助手消息（实时渲染用）。 */
+  /** 当前正在流式输出的助手消息（实时渲染用）。引用不变，内容原地修改。 */
   streamingMessage: StreamingMessage | null;
+  /** 流式消息版本号：每次原地修改 streamingMessage 后递增，触发 UI 响应式更新。 */
+  streamingVersion: number;
   /** 工作目录，用于在 UI 中格式化路径。 */
   cwd: string;
 }
 
 export function initialUiState(): UiState {
-  return { messages: [], subagents: [], running: false, log: [], pendingPermission: null, autoApprove: false, error: null, viewingSubagent: null, subagentMessages: [], streamingMessage: null, cwd: '' };
+  return { messages: [], subagents: [], running: false, log: [], pendingPermission: null, autoApprove: false, error: null, viewingSubagent: null, subagentMessages: [], streamingMessage: null, streamingVersion: 0, cwd: '' };
 }
 
 /** 用户点发送：本地立即回显 user 消息（不等服务端），清掉上一次的错误和流式消息。 */
@@ -69,6 +71,7 @@ export function submitPrompt(state: UiState, prompt: string): UiState {
     ...state,
     error: null,
     streamingMessage: null, // 清空流式消息
+    streamingVersion: state.streamingVersion,
     messages: [...state.messages, { role: 'user', content: [{ type: 'text', text: prompt }] }],
   };
 }
@@ -82,8 +85,8 @@ export function submitSubagentPrompt(state: UiState, prompt: string): UiState {
   };
 }
 
-/** 更新流式消息：根据事件类型累积文本、思考和工具调用。 */
-function updateStreamingMessage(state: UiState, ev: CoreEvent): StreamingMessage | null {
+/** 更新流式消息：根据事件类型累积文本、思考和工具调用。原地修改以保持对象引用，配合 streamingVersion 触发 UI 更新。 */
+function updateStreamingMessage(state: UiState, ev: CoreEvent): void {
   // 如果没有流式消息且事件是文本/思考/工具调用开始，创建新的流式消息
   if (!state.streamingMessage) {
     if (ev.type === 'text_delta' || ev.type === 'thinking_delta' || ev.type === 'tool_call_start') {
@@ -95,16 +98,16 @@ function updateStreamingMessage(state: UiState, ev: CoreEvent): StreamingMessage
       } else if (ev.type === 'tool_call_start') {
         content.push({ type: 'tool_call', id: ev.id, name: ev.name, input: '', status: 'pending' });
       }
-      return { role: 'assistant', content };
+      state.streamingMessage = { role: 'assistant', content };
     }
-    return null;
+    return;
   }
 
-  // 如果有流式消息，更新它
-  const content = [...state.streamingMessage.content];
+  // 如果有流式消息，原地更新 content 数组（保持 streamingMessage 引用不变）
+  const sm = state.streamingMessage;
+  const content = sm.content;
   switch (ev.type) {
     case 'text_delta': {
-      // 查找最后一个文本块并追加（clone to avoid mutating the original）
       const lastText = [...content].reverse().find(c => c.type === 'text');
       if (lastText && lastText.type === 'text') {
         const idx = content.indexOf(lastText);
@@ -115,7 +118,6 @@ function updateStreamingMessage(state: UiState, ev: CoreEvent): StreamingMessage
       break;
     }
     case 'thinking_delta': {
-      // 查找最后一个思考块并追加（clone to avoid mutating the original）
       const lastThinking = [...content].reverse().find(c => c.type === 'thinking');
       if (lastThinking && lastThinking.type === 'thinking') {
         const idx = content.indexOf(lastThinking);
@@ -126,12 +128,10 @@ function updateStreamingMessage(state: UiState, ev: CoreEvent): StreamingMessage
       break;
     }
     case 'tool_call_start': {
-      // 添加新的工具调用
       content.push({ type: 'tool_call', id: ev.id, name: ev.name, input: '', status: 'pending' });
       break;
     }
     case 'tool_call_delta': {
-      // 更新工具调用的输入（clone to avoid mutating the original）
       const toolCall = content.find(c => c.type === 'tool_call' && c.id === ev.id);
       if (toolCall && toolCall.type === 'tool_call') {
         const idx = content.indexOf(toolCall);
@@ -140,7 +140,6 @@ function updateStreamingMessage(state: UiState, ev: CoreEvent): StreamingMessage
       break;
     }
     case 'tool_result': {
-      // 更新工具调用状态为完成（clone to avoid mutating the original）
       const toolCall = content.find(c => c.type === 'tool_call' && c.id === ev.id);
       if (toolCall && toolCall.type === 'tool_call') {
         const idx = content.indexOf(toolCall);
@@ -156,7 +155,6 @@ function updateStreamingMessage(state: UiState, ev: CoreEvent): StreamingMessage
     default:
       break;
   }
-  return { role: 'assistant', content };
 }
 
 export function applyEnvelope(state: UiState, env: EventEnvelope): UiState {
@@ -173,6 +171,7 @@ export function applyEnvelope(state: UiState, env: EventEnvelope): UiState {
     let messages = state.messages;
     let error = state.error;
     let streamingMessage = state.streamingMessage;
+    let streamingVersion = state.streamingVersion;
     if ((ev.type === 'done' || ev.type === 'turn_done') && ev.message.role === 'assistant') {
       // Dedup: use _id (stable across deep clones) to prevent duplicates when
       // the same message appears in both a snapshot and a live event (reconnect),
@@ -214,10 +213,12 @@ export function applyEnvelope(state: UiState, env: EventEnvelope): UiState {
       error = ev.error.message;
       streamingMessage = null; // 错误后清空流式消息
     } else {
-      // 更新流式消息
-      streamingMessage = updateStreamingMessage(state, ev);
+      // 更新流式消息（原地修改，保持引用不变）
+      updateStreamingMessage(state, ev);
+      streamingMessage = state.streamingMessage;
+      streamingVersion = state.streamingVersion + 1;
     }
-    return { ...state, log, running, messages, error, streamingMessage, pendingPermission: TERMINALS.has(ev.type) ? null : state.pendingPermission };
+    return { ...state, log, running, messages, error, streamingMessage, streamingVersion, pendingPermission: TERMINALS.has(ev.type) ? null : state.pendingPermission };
   }
   // subagent events: update the subagent entry + accumulate its live events
   const idx = state.subagents.findIndex((a) => a.name === ev.agent);
@@ -329,5 +330,6 @@ export function mergeSnapshot(state: UiState, snap: SnapshotPayload): UiState {
     error: snap.error ?? null,
     cwd: snap.cwd ?? '',
     streamingMessage: null,
+    streamingVersion: 0,
   };
 }
