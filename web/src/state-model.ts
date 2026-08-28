@@ -108,20 +108,27 @@ function updateStreamingMessage(state: UiState, ev: CoreEvent): void {
   const content = sm.content;
   switch (ev.type) {
     case 'text_delta': {
-      const lastText = [...content].reverse().find(c => c.type === 'text');
-      if (lastText && lastText.type === 'text') {
-        const idx = content.indexOf(lastText);
-        content[idx] = { ...lastText, text: lastText.text + ev.text };
+      // Scan from end — last text block is almost always the last element
+      let lastIdx = -1;
+      for (let i = content.length - 1; i >= 0; i--) {
+        if (content[i].type === 'text') { lastIdx = i; break; }
+      }
+      if (lastIdx >= 0) {
+        const lastText = content[lastIdx] as Extract<StreamingContentBlock, { type: 'text' }>;
+        content[lastIdx] = { ...lastText, text: lastText.text + ev.text };
       } else {
         content.push({ type: 'text', text: ev.text });
       }
       break;
     }
     case 'thinking_delta': {
-      const lastThinking = [...content].reverse().find(c => c.type === 'thinking');
-      if (lastThinking && lastThinking.type === 'thinking') {
-        const idx = content.indexOf(lastThinking);
-        content[idx] = { ...lastThinking, thinking: lastThinking.thinking + ev.thinking };
+      let lastIdx = -1;
+      for (let i = content.length - 1; i >= 0; i--) {
+        if (content[i].type === 'thinking') { lastIdx = i; break; }
+      }
+      if (lastIdx >= 0) {
+        const lastThinking = content[lastIdx] as Extract<StreamingContentBlock, { type: 'thinking' }>;
+        content[lastIdx] = { ...lastThinking, thinking: lastThinking.thinking + ev.thinking };
       } else {
         content.push({ type: 'thinking', thinking: ev.thinking });
       }
