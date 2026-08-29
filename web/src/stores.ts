@@ -6,13 +6,49 @@ import type { CoreEvent } from '../../src/core/events.ts';
 
 export const [state, setState] = createSignal<UiState>(initialUiState());
 
-/** ws 事件进 store：纯归并后写信号。 */
+// ── rAF 批量合并：一个帧窗口内的多个 WS 事件合并成一次 setState ──
+// 解决每 token 一个 text_delta → 50-100 次 setState/s → 50-100 次 DOM 更新的问题。
+let pendingEnvelopes: EventEnvelope[] = [];
+let rafId: number | undefined;
+
+function flushBatch(): void {
+  if (rafId !== undefined) {
+    cancelAnimationFrame(rafId);
+    rafId = undefined;
+  }
+  const batch = pendingEnvelopes;
+  pendingEnvelopes = [];
+  if (batch.length === 0) return;
+  setState((s) => {
+    let next = s;
+    for (const env of batch) next = applyEnvelope(next, env);
+    return next;
+  });
+}
+
+function scheduleBatch(env: EventEnvelope): void {
+  pendingEnvelopes.push(env);
+  if (rafId !== undefined) return;
+  rafId = requestAnimationFrame(() => {
+    rafId = undefined;
+    const batch = pendingEnvelopes;
+    pendingEnvelopes = [];
+    setState((s) => {
+      let next = s;
+      for (const env of batch) next = applyEnvelope(next, env);
+      return next;
+    });
+  });
+}
+
+/** ws 事件进 store：snapshot 立即处理，其余事件 rAF 批量合并。 */
 export function handleEnvelope(env: EventEnvelope): void {
   if (env.type === 'snapshot') {
+    flushBatch();
     setState((s) => mergeSnapshot(s, env));
     return;
   }
-  setState((s) => applyEnvelope(s, env));
+  scheduleBatch(env);
 }
 
 /** 本地乐观更新 autoApprove（config 不经 ws 回传）。 */
@@ -20,8 +56,9 @@ export function setAutoApproveLocal(v: boolean): void {
   setState((s) => ({ ...s, autoApprove: v }));
 }
 
-/** 用户点发送：本地立即回显 user 消息（转发 state-model）。 */
+/** 用户点发送：先 flush 排队中的 WS 事件再写本地回显，保证事件顺序正确。 */
 export function submitPrompt(prompt: string): void {
+  flushBatch();
   setState((s) => submitPromptModel(s, prompt));
 }
 
@@ -40,8 +77,9 @@ export function setSubagentMessages(msgs: (Message | CoreEvent)[]): void {
   setState((s) => ({ ...s, subagentMessages: msgs }));
 }
 
-/** 给子代理发消息：本地回显 + API 注入。 */
+/** 给子代理发消息：先 flush 排队中的 WS 事件再本地回显。 */
 export function submitSubagentPrompt(prompt: string): void {
+  flushBatch();
   setState((s) => submitSubagentPromptModel(s, prompt));
 }
 
