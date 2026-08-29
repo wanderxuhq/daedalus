@@ -114,12 +114,13 @@ function updateStreamingMessage(state: UiState, ev: CoreEvent): void {
         if (content[i].type === 'text') { lastIdx = i; break; }
       }
       if (lastIdx >= 0) {
-        // 原地修改 text，不创建新对象引用。
-        // 避免 <For> 看到新引用后销毁/重建 StreamText，导致 throttle timer 被清除。
-        (content[lastIdx] as Extract<StreamingContentBlock, { type: 'text' }>).text += ev.text;
+        const old = content[lastIdx] as Extract<StreamingContentBlock, { type: 'text' }>;
+        content[lastIdx] = { ...old, text: old.text + ev.text };
       } else {
         content.push({ type: 'text', text: ev.text });
       }
+      // 替换数组引用，强制 <For> 重绘以反映属性变化
+      sm.content = [...content];
       break;
     }
     case 'thinking_delta': {
@@ -128,11 +129,12 @@ function updateStreamingMessage(state: UiState, ev: CoreEvent): void {
         if (content[i].type === 'thinking') { lastIdx = i; break; }
       }
       if (lastIdx >= 0) {
-        // 同上：原地修改，保持引用稳定
-        (content[lastIdx] as Extract<StreamingContentBlock, { type: 'thinking' }>).thinking += ev.thinking;
+        const old = content[lastIdx] as Extract<StreamingContentBlock, { type: 'thinking' }>;
+        content[lastIdx] = { ...old, thinking: old.thinking + ev.thinking };
       } else {
         content.push({ type: 'thinking', thinking: ev.thinking });
       }
+      sm.content = [...content];
       break;
     }
     case 'tool_call_start': {
