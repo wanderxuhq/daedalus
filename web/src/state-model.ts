@@ -230,8 +230,8 @@ export function applyEnvelope(state: UiState, env: EventEnvelope): UiState {
       // 更新流式消息（原地修改 content 属性）
       updateStreamingMessage(state, ev);
       // 浅拷贝 streamingMessage，强制新引用 → setState 检测到变化 → 触发组件重绘
-      // 不拷贝 content 数组：原地修改的 item 已在原数组上生效，浅拷贝共享同一引用
-      streamingMessage = { ...state.streamingMessage as StreamingMessage };
+      // 仅在 streamingMessage 非 null 时拷贝；{ ...null } 在 JS 中产生 {}，会导致后续 .content 报错
+      streamingMessage = state.streamingMessage ? { ...state.streamingMessage as StreamingMessage } : null;
       streamingVersion = state.streamingVersion + 1;
     }
     return { ...state, log, running, messages, error, streamingMessage, streamingVersion, pendingPermission: TERMINALS.has(ev.type) ? null : state.pendingPermission };
