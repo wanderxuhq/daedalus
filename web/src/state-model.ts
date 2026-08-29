@@ -119,8 +119,6 @@ function updateStreamingMessage(state: UiState, ev: CoreEvent): void {
       } else {
         content.push({ type: 'text', text: ev.text });
       }
-      // 替换数组引用，强制 <For> 重绘以反映属性变化
-      sm.content = [...content];
       break;
     }
     case 'thinking_delta': {
@@ -134,7 +132,6 @@ function updateStreamingMessage(state: UiState, ev: CoreEvent): void {
       } else {
         content.push({ type: 'thinking', thinking: ev.thinking });
       }
-      sm.content = [...content];
       break;
     }
     case 'tool_call_start': {
@@ -223,9 +220,11 @@ export function applyEnvelope(state: UiState, env: EventEnvelope): UiState {
       error = ev.error.message;
       streamingMessage = null; // 错误后清空流式消息
     } else {
-      // 更新流式消息（原地修改，保持引用不变）
+      // 更新流式消息（原地修改 content 属性）
       updateStreamingMessage(state, ev);
-      streamingMessage = state.streamingMessage;
+      // 浅拷贝 streamingMessage，强制新引用 → setState 检测到变化 → 触发组件重绘
+      // 不拷贝 content 数组：原地修改的 item 已在原数组上生效，浅拷贝共享同一引用
+      streamingMessage = { ...state.streamingMessage as StreamingMessage };
       streamingVersion = state.streamingVersion + 1;
     }
     return { ...state, log, running, messages, error, streamingMessage, streamingVersion, pendingPermission: TERMINALS.has(ev.type) ? null : state.pendingPermission };
