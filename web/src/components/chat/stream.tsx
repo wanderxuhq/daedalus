@@ -53,6 +53,9 @@ export function StreamText(props: { text: () => string }) {
       // 首次：立即渲染
       hasRenderedOnce = true;
       setHtml(renderMarkdown(text));
+    } else if (html() === '') {
+      // 组件重建（token 到达 → 新引用 → <For> 重建）：立即恢复 pending 文本，不等 timer
+      setHtml(renderMarkdown(text));
     } else if (parseTimer === undefined) {
       // 节流：100ms 内只渲染一次
       parseTimer = setTimeout(flushParse, PARSE_INTERVAL_MS);

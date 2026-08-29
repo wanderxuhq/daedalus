@@ -1,6 +1,9 @@
 import { createSignal, Show } from 'solid-js';
 import type { ToolInfo } from '../../types/messages.ts';
 
+/** 模块级 open 状态：按 tool id 追踪，组件重建时恢复。 */
+const toolOpenState = new Map<string, boolean>();
+
 export function DiffBlock(props: { diff: string }) {
   return (
     <pre class="diff">
@@ -107,10 +110,15 @@ function formatPreview(name: string, input: unknown, cwd?: string): string {
 }
 
 export function ToolCard(props: { tool: ToolInfo; status: 'running' | 'done' | 'error'; cwd?: string }) {
-  const [open, setOpen] = createSignal(false);
+  const [open, setOpen] = createSignal(toolOpenState.get(props.tool.id) ?? false);
   const preview = () => formatPreview(props.tool.name, props.tool.input, props.cwd);
+  const toggle = () => {
+    const next = !open();
+    toolOpenState.set(props.tool.id, next);
+    setOpen(next);
+  };
   return (
-    <div class={`tool-card ${props.status}`} onClick={() => setOpen(!open())}>
+    <div class={`tool-card ${props.status}`} onClick={toggle}>
       <div class="tool-card-header">
         <span class="tool-title">{props.status === 'running' ? '⏳' : props.status === 'error' ? '✗' : '✓'} {props.tool.name}</span>
         <span class="tool-input-preview">{preview()}</span>
