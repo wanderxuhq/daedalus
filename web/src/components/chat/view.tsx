@@ -30,12 +30,28 @@ export function ChatView(props: {
   let chatStreamRef: HTMLDivElement | undefined;
   const [isNearBottom, setIsNearBottom] = createSignal(true);
 
-  // Auto-scroll：用户在底部时，新消息/流式内容到达后自动滚到底部
-  // 使用 'instant' 替代 'smooth'，避免多个平滑滚动动画互相干扰导致跳动
+  // Auto-scroll：MutationObserver 监听 DOM 变化，内容更新后自动滚到底部
+  // 不依赖 streamingVersion —— 解决 StreamText 100ms 节流渲染与 scroll 时序错位导致的跳动
+  createEffect(() => {
+    const el = chatStreamRef;
+    if (!el) return;
+    let rafPending = false;
+    const observer = new MutationObserver(() => {
+      if (isNearBottom() && !rafPending) {
+        rafPending = true;
+        requestAnimationFrame(() => {
+          el.scrollTo({ top: el.scrollHeight, behavior: 'instant' });
+          rafPending = false;
+        });
+      }
+    });
+    observer.observe(el, { childList: true, subtree: true, characterData: true });
+    onCleanup(() => observer.disconnect());
+  });
+
+  // 新消息到达时也滚到底部（不依赖 DOM mutation，如消息列表突然变长）
   createEffect(() => {
     const _msgs = props.messages;
-    const _sc = props.streamingContent;
-    const _v = props.streamingVersion;
     queueMicrotask(() => {
       if (chatStreamRef && isNearBottom()) {
         chatStreamRef.scrollTo({ top: chatStreamRef.scrollHeight, behavior: 'instant' });
