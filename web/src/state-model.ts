@@ -35,8 +35,10 @@ function contentEquals(a: ContentBlock[], b: ContentBlock[]): boolean {
 }
 
 export interface SubagentInfo extends SubagentInfoBase {
-  /** 该 agent 的实时 CoreEvent 累积（detail 页 live 渲染用；snapshot 重置）。 */
-  events: CoreEvent[];
+  /** 流式消息：和主对话的 state.streamingMessage 一样，AI 正在生成的回复。 */
+  streamingMessage: StreamingMessage | null;
+  /** 已完成消息列表：和主对话的 state.messages 一样。 */
+  messages: Message[];
 }
 
 export interface UiState {
