@@ -5,28 +5,18 @@ import { t } from '../../i18n.ts';
 
 export function SubagentPanel(props: {
   subagents: SubagentInfo[];
-  viewingSubagent?: string | null;
-  onView?: (name: string) => void;
-  onReturnToMain?: () => void;
   onAbort?: (name: string) => void;
-  currentSessionTitle?: string;
 }) {
   return (
     <div class="subagents-panel">
       <div class="subagents-panel-header">
         <h3>{t('subagents.title')}</h3>
       </div>
-      <Show when={props.currentSessionTitle !== undefined}>
-        <div class="session-current">
-          <span class="session-current-title">{t('subagents.currentSession')}</span>
-          <span class="session-current-name">{props.currentSessionTitle}</span>
-        </div>
-      </Show>
       <For each={props.subagents}>
         {(a) => (
           <div
-            class={`delegate-row ${props.onView ? 'clickable' : ''} ${props.viewingSubagent === a.name ? 'active' : ''}`}
-            onClick={() => props.onView?.(a.name)}
+            class="delegate-row clickable"
+            onClick={() => { location.hash = `#/agent/${encodeURIComponent(a.name)}`; }}
           >
             <DelegateRow name={a.name} task={a.task} status={a.status} onAbort={props.onAbort} />
           </div>

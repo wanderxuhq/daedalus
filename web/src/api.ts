@@ -23,10 +23,6 @@ export async function chat(prompt: string): Promise<ChatResult> {
   }
 }
 
-export async function getSubagentMessages(name: string): Promise<unknown[]> {
-  const r = await request<{ messages: unknown[] }>('GET', `/api/agents/messages?name=${encodeURIComponent(name)}`);
-  return r.messages;
-}
 export async function closeSubagent(name: string): Promise<void> {
   await request('POST', '/api/agents/close', { name });
 }

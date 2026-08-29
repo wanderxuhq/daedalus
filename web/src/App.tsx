@@ -53,9 +53,6 @@ export function App() {
   const onAbort = async (name?: string) => {
     await abortAgent(name).catch(() => {});
   };
-  const navigateToAgent = (name: string) => {
-    location.hash = `#/agent/${encodeURIComponent(name)}`;
-  };
 
   return (
     <Show
@@ -83,11 +80,11 @@ export function App() {
             pendingPermission={state().pendingPermission}
             cwd={state().cwd}
           />
-          {!isNarrow() && <SubagentPanel subagents={state().subagents} onView={navigateToAgent} onAbort={(name) => onAbort(name)} />}
+          {!isNarrow() && <SubagentPanel subagents={state().subagents} onAbort={(name) => onAbort(name)} />}
         </div>
         {isNarrow() && (
           <Drawer open={drawerOpen()} onClose={() => setDrawerOpen(false)}>
-            <SubagentPanel subagents={state().subagents} onView={navigateToAgent} onAbort={(name) => onAbort(name)} />
+            <SubagentPanel subagents={state().subagents} onAbort={(name) => onAbort(name)} />
           </Drawer>
         )}
         <ChatInput disabled={state().running} autoApprove={state().autoApprove} onSend={onSend} onToggleAuto={onToggleAuto} onAbort={() => onAbort()} onResumeSession={onResumeSession} />
