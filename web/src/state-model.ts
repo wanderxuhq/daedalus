@@ -88,9 +88,9 @@ export function submitSubagentPrompt(state: UiState, prompt: string): UiState {
 }
 
 /** 更新流式消息：根据事件类型累积文本、思考和工具调用。原地修改以保持对象引用，配合 streamingVersion 触发 UI 更新。 */
-function updateStreamingMessage(state: UiState, ev: CoreEvent): void {
+function updateStreamingMessage(target: { streamingMessage: StreamingMessage | null }, ev: CoreEvent): void {
   // 如果没有流式消息且事件是文本/思考/工具调用开始，创建新的流式消息
-  if (!state.streamingMessage) {
+  if (!target.streamingMessage) {
     if (ev.type === 'text_delta' || ev.type === 'thinking_delta' || ev.type === 'tool_call_start') {
       const content: StreamingContentBlock[] = [];
       if (ev.type === 'text_delta') {
@@ -100,13 +100,13 @@ function updateStreamingMessage(state: UiState, ev: CoreEvent): void {
       } else if (ev.type === 'tool_call_start') {
         content.push({ type: 'tool_call', id: ev.id, name: ev.name, input: '', status: 'pending' });
       }
-      state.streamingMessage = { role: 'assistant', content };
+      target.streamingMessage = { role: 'assistant', content };
     }
     return;
   }
 
   // 如果有流式消息，原地更新 content 数组（保持 streamingMessage 引用不变）
-  const sm = state.streamingMessage;
+  const sm = target.streamingMessage;
   const content = sm.content;
   switch (ev.type) {
     case 'text_delta': {
@@ -236,42 +236,75 @@ export function applyEnvelope(state: UiState, env: EventEnvelope): UiState {
     }
     return { ...state, log, running, messages, error, streamingMessage, streamingVersion, pendingPermission: TERMINALS.has(ev.type) ? null : state.pendingPermission };
   }
-  // subagent events: update the subagent entry + accumulate its live events
+  // subagent events: route through updateStreamingMessage for unified rendering
   const idx = state.subagents.findIndex((a) => a.name === ev.agent);
-  // 用户正在查看这个子代理时，即使该 agent 还没出现在列表里（首次 delegate_start 前），
-  // 也要累积实时事件到 subagentMessages。
-  let subagentMessages = state.subagentMessages;
-  if (state.viewingSubagent === ev.agent) {
-    if ((ev.type === 'done' || ev.type === 'turn_done') && ev.message.role === 'assistant') {
-      // 去重：防止 turn_done 和 done 都把同一条消息加到 subagentMessages
-      const lastSubMsg = subagentMessages[subagentMessages.length - 1];
-      const isDup = lastSubMsg && 'role' in lastSubMsg
-        ? (lastSubMsg as Message)._id === (ev.message as Message)._id
-        : false;
-      if (!isDup) {
-        subagentMessages = [...subagentMessages, ev.message];
-      }
-    } else if (ev.type !== 'done' && ev.type !== 'error') {
-      subagentMessages = [...subagentMessages, ev];
-    }
-  }
-  if (idx < 0 && ev.type !== 'delegate_start') return { ...state, subagentMessages };
+  if (idx < 0 && ev.type !== 'delegate_start') return state;
   let subagents: SubagentInfo[];
   if (idx < 0) {
-    subagents = [...state.subagents, { name: ev.agent!, task: (ev as { task?: string }).task ?? '', status: 'running', messageCount: 0, loadedSkills: [], events: [ev] }];
+    subagents = [...state.subagents, {
+      name: ev.agent!,
+      task: (ev as { task?: string }).task ?? '',
+      status: 'running',
+      messageCount: 0,
+      loadedSkills: [],
+      streamingMessage: null,
+      messages: [],
+    }];
   } else {
     subagents = state.subagents.map((a) => {
       if (a.name !== ev.agent) return a;
-      const events = [...a.events, ev];
       switch (ev.type) {
-        case 'delegate_start': return { ...a, task: (ev as { task?: string }).task ?? a.task, status: 'running', events };
-        case 'done': return { ...a, status: 'done', events };
-        case 'error': return { ...a, status: 'error', events };
-        default: return { ...a, events };
+        case 'delegate_start':
+          return { ...a, task: (ev as { task?: string }).task ?? a.task, status: 'running' };
+        case 'done':
+        case 'turn_done': {
+          if (ev.message.role !== 'assistant') return { ...a, status: ev.type === 'done' ? 'done' : a.status };
+          const lastMsg = a.messages[a.messages.length - 1] as Message | undefined;
+          const isDup = lastMsg?._id !== undefined && (ev.message as Message)._id === lastMsg._id;
+          if (isDup) return ev.type === 'done' ? { ...a, status: 'done' } : a;
+          // Merge tool results from streaming message into final message
+          const toolResults = new Map<string, { resultContent: string; diff?: string; status: 'done' | 'error' }>();
+          if (a.streamingMessage) {
+            for (const c of a.streamingMessage.content) {
+              if (c.type === 'tool_call' && c.resultContent !== undefined) {
+                toolResults.set(c.id, { resultContent: c.resultContent, diff: c.diff, status: c.status === 'error' ? 'error' : 'done' });
+              }
+            }
+          }
+          let finalMsg = ev.message;
+          if (toolResults.size > 0) {
+            finalMsg = {
+              ...ev.message,
+              content: ev.message.content.map((b: { type: string; id?: string; [k: string]: unknown }) => {
+                if (b.type === 'tool_call' && b.id && toolResults.has(b.id)) {
+                  return { ...b, ...toolResults.get(b.id) } as ContentBlock;
+                }
+                return b as ContentBlock;
+              }),
+            } as Message;
+          }
+          return {
+            ...a,
+            status: ev.type === 'done' ? 'done' : a.status,
+            streamingMessage: null,
+            messages: [...a.messages, finalMsg],
+          };
+        }
+        case 'error':
+          return { ...a, status: 'error', streamingMessage: null };
+        default: {
+          // Streaming events: route through updateStreamingMessage
+          const sm = { streamingMessage: a.streamingMessage };
+          updateStreamingMessage(sm, ev);
+          return {
+            ...a,
+            streamingMessage: sm.streamingMessage ? { ...sm.streamingMessage } : null,
+          };
+        }
       }
     });
   }
-  return { ...state, subagents, subagentMessages };
+  return { ...state, subagents };
 }
 
 export function mergeSnapshot(state: UiState, snap: SnapshotPayload): UiState {
@@ -345,7 +378,8 @@ export function mergeSnapshot(state: UiState, snap: SnapshotPayload): UiState {
       name: a.name, task: a.task,
       status: (a.status === 'done' || a.status === 'error' ? a.status : 'running') as SubagentInfo['status'],
       messageCount: a.messageCount, loadedSkills: a.loadedSkills,
-      events: [],
+      streamingMessage: null,
+      messages: [],
     })),
     running: snap.running,
     log: [...snap.log],
