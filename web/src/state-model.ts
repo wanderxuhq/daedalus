@@ -130,6 +130,7 @@ function updateStreamingMessage(state: UiState, ev: CoreEvent): void {
         const old = content[lastIdx] as Extract<StreamingContentBlock, { type: 'thinking' }>;
         content[lastIdx] = { ...old, thinking: old.thinking + ev.thinking };
       } else {
+        // 仅在没有 thinking 块时创建新的，防止重复
         content.push({ type: 'thinking', thinking: ev.thinking });
       }
       break;
@@ -240,7 +241,14 @@ export function applyEnvelope(state: UiState, env: EventEnvelope): UiState {
   let subagentMessages = state.subagentMessages;
   if (state.viewingSubagent === ev.agent) {
     if ((ev.type === 'done' || ev.type === 'turn_done') && ev.message.role === 'assistant') {
-      subagentMessages = [...subagentMessages, ev.message];
+      // 去重：防止 turn_done 和 done 都把同一条消息加到 subagentMessages
+      const lastSubMsg = subagentMessages[subagentMessages.length - 1];
+      const isDup = lastSubMsg && 'role' in lastSubMsg
+        ? (lastSubMsg as Message)._id === (ev.message as Message)._id
+        : false;
+      if (!isDup) {
+        subagentMessages = [...subagentMessages, ev.message];
+      }
     } else if (ev.type !== 'done' && ev.type !== 'error') {
       subagentMessages = [...subagentMessages, ev];
     }
