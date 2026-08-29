@@ -114,8 +114,9 @@ function updateStreamingMessage(state: UiState, ev: CoreEvent): void {
         if (content[i].type === 'text') { lastIdx = i; break; }
       }
       if (lastIdx >= 0) {
-        const lastText = content[lastIdx] as Extract<StreamingContentBlock, { type: 'text' }>;
-        content[lastIdx] = { ...lastText, text: lastText.text + ev.text };
+        // 原地修改 text，不创建新对象引用。
+        // 避免 <For> 看到新引用后销毁/重建 StreamText，导致 throttle timer 被清除。
+        (content[lastIdx] as Extract<StreamingContentBlock, { type: 'text' }>).text += ev.text;
       } else {
         content.push({ type: 'text', text: ev.text });
       }
@@ -127,8 +128,8 @@ function updateStreamingMessage(state: UiState, ev: CoreEvent): void {
         if (content[i].type === 'thinking') { lastIdx = i; break; }
       }
       if (lastIdx >= 0) {
-        const lastThinking = content[lastIdx] as Extract<StreamingContentBlock, { type: 'thinking' }>;
-        content[lastIdx] = { ...lastThinking, thinking: lastThinking.thinking + ev.thinking };
+        // 同上：原地修改，保持引用稳定
+        (content[lastIdx] as Extract<StreamingContentBlock, { type: 'thinking' }>).thinking += ev.thinking;
       } else {
         content.push({ type: 'thinking', thinking: ev.thinking });
       }
