@@ -7,3 +7,4 @@ dist/
 web/dist
 dist
 docs/superpowers/
+.worktrees/
