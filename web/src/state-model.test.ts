@@ -116,22 +116,14 @@ test('submitPrompt echoes the user message immediately', () => {
   assert.deepEqual(s.messages[0], { role: 'user', content: [{ type: 'text', text: 'hello' }] });
 });
 
-test('viewingSubagent: subagent events accumulate into subagentMessages when viewing', () => {
+test('submitSubagentPrompt echoes user message into subagent messages', () => {
   let s = initialUiState();
-  s = { ...s, viewingSubagent: 'worker' };
-  s = applyEnvelope(s, ev('text_delta', { text: 'hi', agent: 'worker' }));
-  assert.equal(s.subagentMessages.length, 1);
-  // Non-viewed agent events don't touch subagentMessages.
-  s = applyEnvelope(s, ev('text_delta', { text: 'other', agent: 'scout' }));
-  assert.equal(s.subagentMessages.length, 1);
-});
-
-test('submitSubagentPrompt echoes user message into subagentMessages', () => {
-  let s = initialUiState();
-  s = { ...s, viewingSubagent: 'worker', subagentMessages: [] };
-  s = submitSubagentPrompt(s, 'do it');
-  assert.equal(s.subagentMessages.length, 1);
-  assert.deepEqual(s.subagentMessages[0], { role: 'user', content: [{ type: 'text', text: 'do it' }] });
+  // First, create a subagent via delegate_start
+  s = applyEnvelope(s, ev('delegate_start', { task: 'test task', agent: 'worker' }));
+  s = submitSubagentPrompt(s, 'worker', 'do it');
+  const worker = s.subagents.find(a => a.name === 'worker');
+  assert.equal(worker!.messages.length, 1);
+  assert.deepEqual(worker!.messages[0], { role: 'user', content: [{ type: 'text', text: 'do it' }] });
 });
 
 test('tool_result diff merges into final message on done', () => {

@@ -1,8 +1,6 @@
 import { createSignal } from 'solid-js';
 import { initialUiState, applyEnvelope, mergeSnapshot, submitPrompt as submitPromptModel, submitSubagentPrompt as submitSubagentPromptModel, type UiState } from './state-model.ts';
 import type { EventEnvelope } from './types.ts';
-import type { Message } from './types/messages.ts';
-import type { CoreEvent } from '../../src/core/events.ts';
 
 export const [state, setState] = createSignal<UiState>(initialUiState());
 
@@ -76,20 +74,10 @@ export function clearError(): void {
   setState((s) => (s.error === null ? s : { ...s, error: null }));
 }
 
-/** 切换到子代理视图。 */
-export function setViewingSubagent(name: string | null): void {
-  setState((s) => ({ ...s, viewingSubagent: name, subagentMessages: name === null ? [] : s.subagentMessages }));
-}
-
-/** 设置子代理历史消息（从 API 加载后）。 */
-export function setSubagentMessages(msgs: (Message | CoreEvent)[]): void {
-  setState((s) => ({ ...s, subagentMessages: msgs }));
-}
-
 /** 给子代理发消息：先 flush 排队中的低频事件再本地回显。 */
-export function submitSubagentPrompt(prompt: string): void {
+export function submitSubagentPrompt(name: string, prompt: string): void {
   flushLowFreq();
-  setState((s) => submitSubagentPromptModel(s, prompt));
+  setState((s) => submitSubagentPromptModel(s, name, prompt));
 }
 
 /** 移除最后一个用户消息（POST 失败时回滚）。 */

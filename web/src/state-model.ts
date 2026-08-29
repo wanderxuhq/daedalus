@@ -51,10 +51,6 @@ export interface UiState {
   autoApprove: boolean;
   /** 最近一次主会话 error 事件的文案（横幅展示；快照/新一轮提交时清除）。 */
   error: string | null;
-  /** 当前正在查看的子代理名称，null 表示查看主会话。 */
-  viewingSubagent: string | null;
-  /** 当前查看的子代理的消息列表。 */
-  subagentMessages: (Message | CoreEvent)[];
   /** 当前正在流式输出的助手消息（实时渲染用）。引用不变，内容原地修改。 */
   streamingMessage: StreamingMessage | null;
   /** 流式消息版本号：每次原地修改 streamingMessage 后递增，触发 UI 响应式更新。 */
@@ -64,7 +60,7 @@ export interface UiState {
 }
 
 export function initialUiState(): UiState {
-  return { messages: [], subagents: [], running: false, log: [], pendingPermission: null, autoApprove: false, error: null, viewingSubagent: null, subagentMessages: [], streamingMessage: null, streamingVersion: 0, cwd: '' };
+  return { messages: [], subagents: [], running: false, log: [], pendingPermission: null, autoApprove: false, error: null, streamingMessage: null, streamingVersion: 0, cwd: '' };
 }
 
 /** 用户点发送：本地立即回显 user 消息（不等服务端），清掉上一次的错误和流式消息。 */
@@ -78,12 +74,16 @@ export function submitPrompt(state: UiState, prompt: string): UiState {
   };
 }
 
-/** 给子代理发消息：本地回显到 subagentMessages。 */
-export function submitSubagentPrompt(state: UiState, prompt: string): UiState {
+/** 给子代理发消息：本地回显到对应 subagent 的 messages。 */
+export function submitSubagentPrompt(state: UiState, name: string, prompt: string): UiState {
   return {
     ...state,
     error: null,
-    subagentMessages: [...state.subagentMessages, { role: 'user', content: [{ type: 'text', text: prompt }] }],
+    subagents: state.subagents.map(a =>
+      a.name === name
+        ? { ...a, messages: [...a.messages, { role: 'user', content: [{ type: 'text', text: prompt }] }] }
+        : a
+    ),
   };
 }
 
