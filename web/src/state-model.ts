@@ -135,7 +135,11 @@ function updateStreamingMessage(state: UiState, ev: CoreEvent): void {
       break;
     }
     case 'tool_call_start': {
-      content.push({ type: 'tool_call', id: ev.id, name: ev.name, input: '', status: 'pending' });
+      // 去重：同 id 的 tool_call 已存在则跳过（断线重连可能重放事件）
+      const exists = content.some(c => c.type === 'tool_call' && c.id === ev.id);
+      if (!exists) {
+        content.push({ type: 'tool_call', id: ev.id, name: ev.name, input: '', status: 'pending' });
+      }
       break;
     }
     case 'tool_call_delta': {
