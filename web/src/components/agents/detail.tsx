@@ -57,7 +57,6 @@ export function AgentDetail(props: { name: string }) {
         {(a) => (
           <div class="agent-meta">
             <Badge status={a().status} />
-            <span class="agent-task">{a().task}</span>
           </div>
         )}
       </Show>

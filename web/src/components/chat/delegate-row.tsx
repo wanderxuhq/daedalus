@@ -4,7 +4,6 @@ export function DelegateRow(props: { name: string; task: string; status: 'runnin
     <div class="delegate-row-content">
       <Badge status={props.status} />
       <span class="delegate-name">subagent [{props.name}]</span>
-      {props.task && <span class="delegate-task">{props.task}</span>}
       {props.status === 'running' && props.onAbort && (
         <button class="abort-btn" onClick={(e) => { e.stopPropagation(); props.onAbort!(props.name); }} title="Stop">⏹</button>
       )}
