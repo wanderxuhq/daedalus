@@ -16,10 +16,10 @@ export type RenderableContent =
 
 export function MessageContent(props: {
   content: RenderableContent[];
-  renderText?: (text: string) => JSX.Element;
+  renderText?: (text: () => string) => JSX.Element;
   cwd?: string;
 }) {
-  const renderDefault = (text: string) => <StreamText text={text} />;
+  const renderDefault = (text: () => string) => <StreamText text={text} />;
   const render = props.renderText || renderDefault;
   
   return (
@@ -27,13 +27,13 @@ export function MessageContent(props: {
       {(c: RenderableContent) => (
         <>
           {/* ContentBlock 格式 */}
-          {c.type === 'text' && render(c.text)}
-          {c.type === 'thinking' && <Thinking text={c.thinking} />}
+          {c.type === 'text' && render(() => c.text)}
+          {c.type === 'thinking' && <Thinking text={() => c.thinking} />}
           {c.type === 'tool_call' && <ToolCard tool={{ id: c.id, name: c.name, input: c.input, content: c.resultContent, diff: c.diff, status: c.status === 'error' ? 'error' : 'done' }} status={c.status === 'error' ? 'error' : 'done'} cwd={props.cwd} />}
           
           {/* CoreEvent 格式 (用于实时事件渲染) */}
-          {c.type === 'text_delta' && render(c.text)}
-          {c.type === 'thinking_delta' && <Thinking text={c.thinking} />}
+          {c.type === 'text_delta' && render(() => c.text)}
+          {c.type === 'thinking_delta' && <Thinking text={() => c.thinking} />}
           {c.type === 'tool_call_start' && <ToolCard tool={{ id: c.id, name: c.name, input: {}, status: 'running' }} status="running" cwd={props.cwd} />}
           {c.type === 'tool_result' && 'id' in c && <ToolCard tool={{ id: c.id, name: c.name, input: c.input, content: c.content, diff: c.diff, status: 'done' }} status="done" cwd={props.cwd} />}
           {c.type === 'delegate_start' && <div class="event-line">→ subagent [{c.agent}] {c.task}</div>}
