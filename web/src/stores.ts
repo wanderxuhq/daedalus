@@ -6,18 +6,23 @@ import type { CoreEvent } from '../../src/core/events.ts';
 
 export const [state, setState] = createSignal<UiState>(initialUiState());
 
-// ── rAF 批量合并：一个帧窗口内的多个 WS 事件合并成一次 setState ──
-// 解决每 token 一个 text_delta → 50-100 次 setState/s → 50-100 次 DOM 更新的问题。
-let pendingEnvelopes: EventEnvelope[] = [];
+// ── 混合调度：高频流式事件立即处理，低频事件 rAF 批量合并 ──
+// text_delta / thinking_delta / tool_call_delta 每秒 50-100 个，立即处理保证流式体验。
+// tool_call_start / tool_result / turn_done / done 等每轮只出现几次，批量合并减少 DOM 更新。
+
+/** 高频流式事件：直接 setState，不经过 rAF 队列。 */
+const STREAMING_TYPES = new Set(['text_delta', 'thinking_delta', 'tool_call_delta']);
+
+let pendingLowFreq: EventEnvelope[] = [];
 let rafId: number | undefined;
 
-function flushBatch(): void {
+function flushLowFreq(): void {
   if (rafId !== undefined) {
     cancelAnimationFrame(rafId);
     rafId = undefined;
   }
-  const batch = pendingEnvelopes;
-  pendingEnvelopes = [];
+  const batch = pendingLowFreq;
+  pendingLowFreq = [];
   if (batch.length === 0) return;
   setState((s) => {
     let next = s;
@@ -26,13 +31,13 @@ function flushBatch(): void {
   });
 }
 
-function scheduleBatch(env: EventEnvelope): void {
-  pendingEnvelopes.push(env);
+function scheduleLowFreq(env: EventEnvelope): void {
+  pendingLowFreq.push(env);
   if (rafId !== undefined) return;
   rafId = requestAnimationFrame(() => {
     rafId = undefined;
-    const batch = pendingEnvelopes;
-    pendingEnvelopes = [];
+    const batch = pendingLowFreq;
+    pendingLowFreq = [];
     setState((s) => {
       let next = s;
       for (const env of batch) next = applyEnvelope(next, env);
@@ -41,14 +46,18 @@ function scheduleBatch(env: EventEnvelope): void {
   });
 }
 
-/** ws 事件进 store：snapshot 立即处理，其余事件 rAF 批量合并。 */
+/** ws 事件进 store：snapshot / 高频流式事件立即处理，低频事件 rAF 批量合并。 */
 export function handleEnvelope(env: EventEnvelope): void {
   if (env.type === 'snapshot') {
-    flushBatch();
+    flushLowFreq();
     setState((s) => mergeSnapshot(s, env));
     return;
   }
-  scheduleBatch(env);
+  if (env.type === 'event' && STREAMING_TYPES.has(env.ev.type)) {
+    setState((s) => applyEnvelope(s, env));
+    return;
+  }
+  scheduleLowFreq(env);
 }
 
 /** 本地乐观更新 autoApprove（config 不经 ws 回传）。 */
@@ -56,9 +65,9 @@ export function setAutoApproveLocal(v: boolean): void {
   setState((s) => ({ ...s, autoApprove: v }));
 }
 
-/** 用户点发送：先 flush 排队中的 WS 事件再写本地回显，保证事件顺序正确。 */
+/** 用户点发送：先 flush 排队中的低频事件再写本地回显，保证事件顺序正确。 */
 export function submitPrompt(prompt: string): void {
-  flushBatch();
+  flushLowFreq();
   setState((s) => submitPromptModel(s, prompt));
 }
 
@@ -77,9 +86,9 @@ export function setSubagentMessages(msgs: (Message | CoreEvent)[]): void {
   setState((s) => ({ ...s, subagentMessages: msgs }));
 }
 
-/** 给子代理发消息：先 flush 排队中的 WS 事件再本地回显。 */
+/** 给子代理发消息：先 flush 排队中的低频事件再本地回显。 */
 export function submitSubagentPrompt(prompt: string): void {
-  flushBatch();
+  flushLowFreq();
   setState((s) => submitSubagentPromptModel(s, prompt));
 }
 
